@@ -46,6 +46,27 @@ npm run dev
 The frontend defaults to the API at `http://127.0.0.1:8000` for local
 development. In production, configure `API_BASE_URL` on the frontend service.
 
+## Deploy the API to Vercel
+
+Use a separate Vercel project for the API with the repository root directory
+set to `backend`. Configure these Production environment variables:
+
+- `GEMINI_API_KEY`
+- `JWT_SECRET_KEY` (a private random value of at least 32 characters)
+- `DATABASE_URL` (the pooled connection string from the connected Neon database)
+- `BLOB_STORE_ID` and either `VERCEL_OIDC_TOKEN` or
+  `BLOB_READ_WRITE_TOKEN` from a connected private Vercel Blob store
+- `CORS_ORIGINS` and `FRONTEND_URL` set to the deployed frontend origin
+
+On Vercel, `APP_DATA_DIR` defaults to `/tmp`; locally it defaults to the
+project directory. The database uses Neon and user-uploaded files use private
+Blob storage so they do not depend on the ephemeral function filesystem.
+Vercel Functions have a request body size limit, so the API-proxied upload
+endpoints cannot reliably accept files larger than 4.5 MB.
+
+The API initializes its database tables on startup. Existing local or
+ephemeral SQLite records are not copied into Neon.
+
 ## Deploy to Railway
 
 The repository contains separate Dockerfiles for Railway's frontend and API

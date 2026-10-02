@@ -22,7 +22,6 @@ import {
   FileCheck2,
   FileText,
   GraduationCap,
-  Key,
   LayoutGrid,
   Loader2,
   LogOut,
@@ -34,7 +33,6 @@ import {
   RefreshCw,
   Search,
   Send,
-  Settings,
   ShieldCheck,
   Sparkles,
   StopCircle,
@@ -154,7 +152,7 @@ const CLASS_GRADE_OPTIONS = [
   "University - Undergraduate", "University - Postgraduate",
 ];
 
-type Role = "student" | "teacher" | "staff" | "superadmin";
+type Role = "student" | "teacher" | "staff";
 type Institution = "School" | "College" | "University";
 type Tab =
   | "profile"
@@ -177,7 +175,6 @@ type Tab =
   | "student-assignment"
   | "student-quiz"
   | "reports"
-  | "tokens"
   | "teacher-quiz-submissions"
   | "departments"
   | "students"
@@ -329,7 +326,8 @@ const STAFF_TOOLS: ToolConfig[] = [
 ];
 
 function normalizeRole(role: string): Role {
-  return role === "super_admin" ? "superadmin" : (role as Role);
+  if (role === "student" || role === "teacher" || role === "staff") return role;
+  throw new Error("This account has an unsupported role. Contact staff for assistance.");
 }
 
 function prettyDate(value: any) {
@@ -344,7 +342,7 @@ export default function App() {
     try {
       const raw = localStorage.getItem("khanmigo_user");
       const storedUser = raw ? JSON.parse(raw) as User : null;
-      return storedUser?.access_token ? storedUser : null;
+      return storedUser?.access_token && ["student", "teacher", "staff"].includes(storedUser.role) ? storedUser : null;
     } catch {
       return null;
     }
@@ -360,7 +358,9 @@ export default function App() {
   const [resetToken, setResetToken] = useState("");
   const [selectedRole, setSelectedRole] = useState<Role>("student");
   const [selectedInstitution, setSelectedInstitution] = useState<Institution>("University");
-  const [invitationCode, setInvitationCode] = useState("");
+  const [qualification, setQualification] = useState("");
+  const [teachingSubject, setTeachingSubject] = useState("");
+  const [designation, setDesignation] = useState("");
   const [termsAccepted, setTermsAccepted] = useState(false);
   const [authError, setAuthError] = useState("");
   const [authSuccess, setAuthSuccess] = useState("");
@@ -507,11 +507,9 @@ export default function App() {
   const [maxMarks, setMaxMarks] = useState("100");
   const [toolText, setToolText] = useState("");
 
-  const [generatedTokens, setGeneratedTokens] = useState<any[]>([]);
-  const [tokenRole, setTokenRole] = useState<"teacher" | "staff">("teacher");
-  const [tokenLoading, setTokenLoading] = useState(false);
 
   const [profileData, setProfileData] = useState<any>(null);
+  const profilePicture = profileData?.profile_pic || user?.profile_pic;
   const [profileName, setProfileName] = useState("");
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -814,18 +812,8 @@ export default function App() {
     }
   };
 
-  const loadAdminTokens = async () => {
-    if (!user || user.role !== "superadmin") return;
-    try {
-      const data = await api(`/api/admin/invitations/${user.user_id}`);
-      setGeneratedTokens(Array.isArray(data) ? data : []);
-    } catch {
-      setGeneratedTokens([]);
-    }
-  };
-
   const loadStaffClasses = async () => {
-    if (!user || !["staff", "superadmin"].includes(user.role)) return;
+    if (!user || user.role !== "staff") return;
     try {
       const classes = await api(`/api/classes/all?requester_id=${user.user_id}`);
       setStaffClasses(Array.isArray(classes) ? classes : []);
@@ -835,7 +823,7 @@ export default function App() {
   };
 
   const loadStaffAnnouncements = async () => {
-    if (!user || !["staff", "superadmin"].includes(user.role)) return;
+    if (!user || user.role !== "staff") return;
     try {
       const announcements = await api(`/api/announcements/user/${user.user_id}`);
       setStaffAnnouncements(Array.isArray(announcements) ? announcements : []);
@@ -851,9 +839,8 @@ export default function App() {
     loadFullProfile();
     if (user.role === "teacher") loadTeacherPortal();
     if (user.role === "student") loadStudentPortal();
-    if (user.role === "staff" || user.role === "superadmin") loadStaffClasses();
-    if (user.role === "staff" || user.role === "superadmin") loadStaffAnnouncements();
-    if (user.role === "superadmin") loadAdminTokens();
+    if (user.role === "staff") loadStaffClasses();
+    if (user.role === "staff") loadStaffAnnouncements();
   }, [user]);
 
   useEffect(() => {
@@ -891,8 +878,14 @@ export default function App() {
         return;
       }
       if (authMode === "register" && !termsAccepted) throw new Error("Please accept the terms.");
+      if (authMode === "register" && !fullName.trim()) throw new Error("Enter your full name.");
+      if (authMode === "register" && selectedRole === "teacher" && (!qualification.trim() || !teachingSubject.trim())) {
+        throw new Error("Enter your teaching qualification and subject.");
+      }
+      if (authMode === "register" && selectedRole === "staff" && (!qualification.trim() || !designation.trim())) {
+        throw new Error("Enter your qualification and designation.");
+      }
       if (!email.trim() || !password) throw new Error("Email and password are required.");
-      const endpoint = authMode === "login" ? "/api/auth/login" : "/api/auth/register";
       const payload = authMode === "login"
         ? { email: email.trim(), password }
         : {
@@ -901,16 +894,21 @@ export default function App() {
             password,
             role: selectedRole,
             institution_mode: selectedInstitution,
-            invitation_code: selectedRole === "teacher" || selectedRole === "staff" ? invitationCode.trim() : undefined,
+            qualification: selectedRole === "student" ? "" : qualification.trim(),
+            teaching_subject: selectedRole === "teacher" ? teachingSubject.trim() : "",
+            designation: selectedRole === "staff" ? designation.trim() : "",
           };
-      const data = await api(endpoint, { method: "POST", body: JSON.stringify(payload) });
+      const data = await api(authMode === "login" ? "/api/auth/login" : "/api/auth/register", { method: "POST", body: JSON.stringify(payload) });
       if (authMode === "login") {
         const nextUser: User = { ...data, access_token: data.access_token, role: normalizeRole(data.role) };
         setUser(nextUser);
       } else {
         setAuthMode("login");
         setPassword("");
-        setInvitationCode("");
+        setQualification("");
+        setTeachingSubject("");
+        setDesignation("");
+        setSelectedRole("student");
         setAuthSuccess("Registration complete. Sign in to continue.");
       }
     } catch (e: any) {
@@ -1005,7 +1003,7 @@ export default function App() {
   };
 
   const postStaffAnnouncement = async () => {
-    if (!user || !["staff", "superadmin"].includes(user.role)) return;
+    if (!user || user.role !== "staff") return;
     if (!staffAnnouncementTitle.trim() || !staffAnnouncementBody.trim()) {
       setStaffAnnouncementError("Add a title and message before posting.");
       return;
@@ -1557,20 +1555,6 @@ export default function App() {
     setIsRecording(false);
     setInterimTranscript("");
     if (timerRef.current) clearInterval(timerRef.current);
-  };
-
-  const generateToken = async () => {
-    if (!user) return;
-    try {
-      setTokenLoading(true);
-      const data = await api("/api/admin/generate-invitation", { method: "POST", body: JSON.stringify({ admin_id: user.user_id, target_role: tokenRole, institution_mode: user.institution_mode, valid_days: 7 }) });
-      await loadAdminTokens();
-      alert(`New invitation token: ${data.token}`);
-    } catch (e: any) {
-      alert(e?.message || "Unable to generate token.");
-    } finally {
-      setTokenLoading(false);
-    }
   };
 
   const attendancePercentage = useMemo(() => {
@@ -2522,7 +2506,7 @@ const renderStudentResults = () => {
         <div className="flex items-center justify-between p-5 border-b border-slate-100">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-2xl bg-blue-600 text-white flex items-center justify-center shadow-sm"><GraduationCap className="w-5 h-5" /></div>
-            <div><h1 className="font-black text-lg text-slate-900">BALOCHISTAN ACADMY</h1><p className="text-[10px] uppercase font-black tracking-wider text-slate-400">{user.role === "superadmin" ? "Super Admin" : user.role} Portal</p></div>
+            <div><h1 className="font-black text-lg text-slate-900">BALOCHISTAN ACADMY</h1><p className="text-[10px] uppercase font-black tracking-wider text-slate-400">{user.role} Portal</p></div>
           </div>
           <button className="md:hidden p-2 rounded-lg hover:bg-slate-100" onClick={() => setMobileSidebar(false)}><X className="w-5 h-5" /></button>
         </div>
@@ -2559,22 +2543,13 @@ const renderStudentResults = () => {
             <NavButton id="attendance" label="Attendance" icon={Clock} />
             <NavButton id="chat" label="AI Assistant" icon={Sparkles} />
           </div>}
-          {user.role === "superadmin" && <div className="space-y-1">
-            <NavButton id="dashboard" label="Admin Dashboard" icon={ShieldCheck} />
-            <NavButton id="classes" label="Classroom Oversight" icon={GraduationCap} />
-            <NavButton id="announcements" label="Institution Notices" icon={Megaphone} />
-            <NavButton id="tokens" label="Invitation Tokens" icon={Key} />
-            <NavButton id="reports" label="System Reports" icon={BarChart3} />
-            <NavButton id="browse-subjects" label="Curriculum" icon={BookCopy} />
-            <NavButton id="chat" label="AI Admin Assistant" icon={Sparkles} />
-          </div>}
         </div>
         <div className="p-4 border-t border-slate-100 bg-slate-50">
           <div className="flex items-center gap-3 p-3 bg-white border border-slate-200 rounded-2xl">
             <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-700 flex items-center justify-center font-black overflow-hidden shrink-0 border border-slate-200">
               {user.profile_pic ? (
                 <img
-                  src={user.profile_pic.startsWith("http") ? user.profile_pic : `${API_BASE}${user.profile_pic}`}
+                  src={profilePicture?.startsWith("http") ? profilePicture : profilePicture ? `${API_BASE}${profilePicture}` : undefined}
                   alt={user.full_name}
                   className="w-full h-full object-cover object-top"
                   onError={(e) => {
@@ -3429,7 +3404,7 @@ const handleAIQuizCheck = async () => {
               <div className="h-28 w-28 overflow-hidden rounded-[1.75rem] border-4 border-white/80 bg-white/15 shadow-xl">
                 {user.profile_pic ? (
                   <img
-                    src={`${user.profile_pic.startsWith("http") ? "" : API_BASE}${user.profile_pic}${user.profile_pic.includes("?") ? "&" : "?"}v=${encodeURIComponent(user.profile_pic)}`}
+                    src={profilePicture?.startsWith("http") ? profilePicture : profilePicture ? `${API_BASE}${profilePicture}${profilePicture.includes("?") ? "&" : "?"}v=${encodeURIComponent(profilePicture)}` : undefined}
                     alt={`${user.full_name}'s profile`}
                     className="h-full w-full object-cover object-center"
                   />
@@ -3522,10 +3497,8 @@ const handleAIQuizCheck = async () => {
     );
   };
 
-  const renderStaffDashboard = () => <Page><Header title={`Welcome back, ${user?.full_name || "Staff"}`} subtitle="Manage operational work with AI support for reports, communication and planning." /><div className="grid md:grid-cols-3 gap-5">{[["AI Assistant", "chat", Sparkles], ["Reports", "reports", BarChart3], ["Operational Tools", "chat", Settings]].map(([title, tab, Icon]: any) => <button key={title} onClick={() => nav(tab)} className="bg-white border border-slate-200 rounded-3xl p-6 text-left hover:shadow-md"><Icon className="w-7 h-7 text-blue-600 mb-4" /><h3 className="font-black text-lg">{title}</h3><p className="text-sm text-slate-500 mt-1">Open workspace</p></button>)}</div><SectionCard title="Staff AI Tools" className="mt-6"><div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">{STAFF_TOOLS.map((tool) => <button key={tool.id} onClick={() => { setSelectedTool(tool); nav("chat"); setMessages([{ sender: "assistant", content: `I am ready to help with ${tool.title}. Describe the task you need completed.` }]); }} className="border border-slate-200 rounded-2xl p-4 text-left hover:border-blue-200"><p className="font-bold">{tool.title}</p><p className="text-xs text-slate-500 mt-1">{tool.description}</p></button>)}</div></SectionCard></Page>;
-  const renderSuperAdminDashboard = () => <Page><Header title={`Super Admin Dashboard`} subtitle="Manage registration access and use the AI admin assistant." action={<Button onClick={loadAdminTokens} variant="dark"><RefreshCw className="w-4 h-4" />Refresh</Button>} /><div className="grid md:grid-cols-3 gap-5"><StatCard label="Invitation Tokens" value={generatedTokens.length} icon={Key} /><StatCard label="Active Tokens" value={generatedTokens.filter((x) => !x.is_used).length} icon={ShieldCheck} /><StatCard label="Institution Mode" value={user?.institution_mode || "—"} icon={GraduationCap} /></div><div className="grid md:grid-cols-2 gap-5 mt-6"><button onClick={() => nav("tokens")} className="bg-white border border-slate-200 rounded-3xl p-6 text-left hover:shadow-md"><Key className="w-7 h-7 text-blue-600" /><h3 className="font-black text-lg mt-4">Invitation Management</h3><p className="text-sm text-slate-500 mt-1">Generate Teacher and Staff signup tokens.</p></button><button onClick={() => nav("chat")} className="bg-white border border-slate-200 rounded-3xl p-6 text-left hover:shadow-md"><Sparkles className="w-7 h-7 text-purple-600" /><h3 className="font-black text-lg mt-4">Admin AI Assistant</h3><p className="text-sm text-slate-500 mt-1">Draft policies, analyze supplied audit information and more.</p></button></div></Page>;
-  const renderReports = () => <Page><Header title="Reports" subtitle="This workspace is ready for report data exposed by your backend." /><Empty title="Report workspace" text={user?.role === "staff" ? "Use the Staff AI tools to generate and analyze reports from supplied institutional data." : "Use the AI Admin Assistant for analysis and policy drafting."} action={<Button onClick={() => nav("chat")}><Sparkles className="w-4 h-4" />Open AI Assistant</Button>} /></Page>;
-  const renderTokens = () => <Page><Header title="Institution Registration Tokens" subtitle="Generate authorized invitation codes for Teacher and Staff registration." action={<Button onClick={generateToken} disabled={tokenLoading}>{tokenLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Key className="w-4 h-4" />}Generate Token</Button>} /><div className="flex items-center gap-3 mb-6"><select value={tokenRole} onChange={(e) => setTokenRole(e.target.value as any)} className="border border-slate-200 rounded-xl px-4 py-3 bg-white font-bold"><option value="teacher">Teacher</option><option value="staff">Staff</option></select></div><SectionCard title={`Generated Tokens (${generatedTokens.length})`}>{generatedTokens.length === 0 ? <Empty title="No tokens yet" text="Generate a token to authorize a Teacher or Staff signup." /> : <div className="divide-y">{generatedTokens.map((t) => <div key={t.id} className="py-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3"><div><span className="inline-flex px-2 py-1 rounded-full bg-slate-100 text-xs font-black uppercase">{t.role}</span><p className="font-mono font-black tracking-wider mt-2">{t.token}</p><p className="text-xs text-slate-400 mt-1">{prettyDate(t.created_at)} • {t.institution_mode}</p></div><div className="flex items-center gap-2"><Badge>{t.is_used ? `Used by ${t.used_by_name || "User"}` : "Active / Unused"}</Badge><button onClick={() => { navigator.clipboard?.writeText(t.token); alert("Token copied."); }} className="p-2 rounded-lg border border-slate-200"><Copy className="w-4 h-4" /></button></div></div>)}</div>}</SectionCard></Page>;
+  const renderStaffDashboard = () => <Page><Header title={`Welcome back, ${user?.full_name || "Staff"}`} subtitle="Manage operational work with AI support for reports, communication and planning." /><div className="grid md:grid-cols-2 xl:grid-cols-4 gap-5">{[["AI Assistant", "chat", Sparkles], ["Reports", "reports", BarChart3], ["Classroom Oversight", "classes", GraduationCap], ["Institution Notices", "announcements", Megaphone]].map(([title, tab, Icon]: any) => <button key={title} onClick={() => nav(tab)} className="bg-white border border-slate-200 rounded-3xl p-6 text-left hover:shadow-md"><Icon className="w-7 h-7 text-blue-600 mb-4" /><h3 className="font-black text-lg">{title}</h3><p className="text-sm text-slate-500 mt-1">Open workspace</p></button>)}</div><SectionCard title="Staff AI Tools" className="mt-6"><div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">{STAFF_TOOLS.map((tool) => <button key={tool.id} onClick={() => { setSelectedTool(tool); nav("chat"); setMessages([{ sender: "assistant", content: `I am ready to help with ${tool.title}. Describe the task you need completed.` }]); }} className="border border-slate-200 rounded-2xl p-4 text-left hover:border-blue-200"><p className="font-bold">{tool.title}</p><p className="text-xs text-slate-500 mt-1">{tool.description}</p></button>)}</div></SectionCard></Page>;
+  const renderReports = () => <Page><Header title="Reports" subtitle="This workspace is ready for report data exposed by your backend." /><Empty title="Report workspace" text="Use the Staff AI tools to generate and analyze reports from supplied institutional data." action={<Button onClick={() => nav("chat")}><Sparkles className="w-4 h-4" />Open AI Assistant</Button>} /></Page>;
 
   const renderChat = () => {
     const filteredConvs = conversations.filter((c: any) => 
@@ -3895,7 +3868,7 @@ const handleAIQuizCheck = async () => {
      AUTH SCREEN RENDER
   ======================================================= */
   if (!user) {
-    return <AuthScreen authMode={authMode} setAuthMode={setAuthMode} fullName={fullName} setFullName={setFullName} email={email} setEmail={setEmail} password={password} setPassword={setPassword} confirmPassword={resetConfirmPassword} setConfirmPassword={setResetConfirmPassword} selectedRole={selectedRole} setSelectedRole={setSelectedRole} selectedInstitution={selectedInstitution} setSelectedInstitution={setSelectedInstitution} invitationCode={invitationCode} setInvitationCode={setInvitationCode} termsAccepted={termsAccepted} setTermsAccepted={setTermsAccepted} loading={authLoading} error={authError} success={authSuccess} onSubmit={handleAuth} />;
+    return <AuthScreen authMode={authMode} setAuthMode={setAuthMode} fullName={fullName} setFullName={setFullName} email={email} setEmail={setEmail} password={password} setPassword={setPassword} confirmPassword={resetConfirmPassword} setConfirmPassword={setResetConfirmPassword} selectedRole={selectedRole} setSelectedRole={setSelectedRole} selectedInstitution={selectedInstitution} setSelectedInstitution={setSelectedInstitution} qualification={qualification} setQualification={setQualification} teachingSubject={teachingSubject} setTeachingSubject={setTeachingSubject} designation={designation} setDesignation={setDesignation} termsAccepted={termsAccepted} setTermsAccepted={setTermsAccepted} loading={authLoading} error={authError} success={authSuccess} onSubmit={handleAuth} />;
   }
 
   let content: React.ReactNode;
@@ -3938,19 +3911,7 @@ const handleAIQuizCheck = async () => {
       renderStudentDashboard();
   } else if (user.role === "staff") {
     content = 
-      activeTab === "dashboard" ? renderStaffDashboard() : 
-      activeTab === "reports" ? renderReports() : 
-      ["students", "teachers", "staff"].includes(activeTab) ? renderDirectoryTable(activeTab) :
-      activeTab === "departments" ? renderDepartmentsView() :
-      activeTab === "announcements" ? renderStaffAnnouncements() :
-      activeTab === "browse-subjects" ? renderBrowseSubjects() :
-      activeTab === "subject-view" ? renderSubjectView() :
-      activeTab === "classes" ? renderAllClassesView() :
-      renderChat();
-  } else {
-    content = 
-      activeTab === "dashboard" ? renderSuperAdminDashboard() : 
-      activeTab === "tokens" ? renderTokens() : 
+      activeTab === "dashboard" ? renderStaffDashboard() :
       activeTab === "reports" ? renderReports() : 
       ["students", "teachers", "staff"].includes(activeTab) ? renderDirectoryTable(activeTab) :
       activeTab === "departments" ? renderDepartmentsView() :
@@ -4009,7 +3970,7 @@ function AuthScreen(props: any) {
   const [showPassword, setShowPassword] = useState(false);
   const isAccountForm = props.authMode === "login" || props.authMode === "register";
   const title = props.authMode === "login" ? "Welcome back" : props.authMode === "register" ? "Join your learning community" : props.authMode === "forgot" ? "Recover your account" : "Choose a new password";
-  const subtitle = props.authMode === "login" ? "Sign in to continue to your learning workspace." : props.authMode === "register" ? "Create an account for your Balochistan Acadmy learning workspace." : props.authMode === "forgot" ? "Enter your account email and we will send a secure reset link." : "Use at least 8 characters for your new password.";
+  const subtitle = props.authMode === "login" ? "Sign in to continue to your learning workspace." : props.authMode === "register" ? "Create a student, teacher, or staff account with no invitation code." : props.authMode === "forgot" ? "Enter your account email and we will send a secure reset link." : "Use at least 8 characters for your new password.";
 
   return (
     <main className="auth-backdrop relative flex min-h-screen items-center justify-center overflow-x-hidden px-4 py-8 sm:px-8 lg:py-10">
@@ -4069,7 +4030,7 @@ function AuthScreen(props: any) {
           {isAccountForm && (
             <div className="mb-8 flex rounded-xl bg-slate-100 p-1">
               {["login", "register"].map((mode) => (
-                <button key={mode} type="button" onClick={() => props.setAuthMode(mode)} className={`flex-1 rounded-lg px-4 py-2.5 text-sm font-bold transition ${props.authMode === mode ? "bg-white text-[#14573f] shadow-sm" : "text-slate-500 hover:text-slate-700"}`}>
+                <button key={mode} type="button" onClick={() => { props.setSelectedRole("student"); props.setAuthMode(mode); }} className={`flex-1 rounded-lg px-4 py-2.5 text-sm font-bold transition ${props.authMode === mode ? "bg-white text-[#14573f] shadow-sm" : "text-slate-500 hover:text-slate-700"}`}>
                   {mode === "login" ? "Sign in" : "Create account"}
                 </button>
               ))}
@@ -4084,10 +4045,17 @@ function AuthScreen(props: any) {
 
           <form onSubmit={props.onSubmit} className="space-y-4">
             {props.authMode === "register" && <>
-              <Field label="Full Name" value={props.fullName} onChange={props.setFullName} placeholder="Your full name" />
+              <Field label="Full Name" value={props.fullName} onChange={props.setFullName} placeholder="Your full name" required maxLength={120} />
               <SelectField label="Role" value={props.selectedRole} onChange={props.setSelectedRole} options={["student", "teacher", "staff"]} />
               <SelectField label={props.selectedRole === "student" ? "Education level" : "Institution"} value={props.selectedInstitution} onChange={props.setSelectedInstitution} options={["School", "College", "University"]} />
-              {(props.selectedRole === "teacher" || props.selectedRole === "staff") && <Field label="Invitation Code" value={props.invitationCode} onChange={props.setInvitationCode} placeholder="Provided by your administrator" />}
+              {props.selectedRole === "teacher" && <>
+                <Field label="Teaching qualification" value={props.qualification} onChange={props.setQualification} placeholder="e.g. B.Ed, M.Ed, or subject degree" required maxLength={120} />
+                <Field label="Teaching subject" value={props.teachingSubject} onChange={props.setTeachingSubject} placeholder="e.g. Mathematics, English, or Science" required maxLength={120} />
+              </>}
+              {props.selectedRole === "staff" && <>
+                <Field label="Education / professional qualification" value={props.qualification} onChange={props.setQualification} placeholder="e.g. Bachelor's degree or diploma" required maxLength={120} />
+                <Field label="Institution role / designation" value={props.designation} onChange={props.setDesignation} placeholder="e.g. Coordinator, Librarian, or Clerk" required maxLength={120} />
+              </>}
             </>}
             {props.authMode !== "reset" && <Field label="Email address" type="email" value={props.email} onChange={props.setEmail} placeholder="name@example.com" />}
             {(props.authMode === "login" || props.authMode === "register" || props.authMode === "reset") && <div className="block">
@@ -4146,7 +4114,7 @@ function Badge({ children }: { children: React.ReactNode }) { return <span class
 function AlertBox({ children, tone = "error" }: { children: React.ReactNode; tone?: "error" | "success" | "info" }) { const cls = tone === "error" ? "bg-red-50 border-red-200 text-red-700" : tone === "success" ? "bg-green-50 border-green-200 text-green-700" : "bg-blue-50 border-blue-200 text-blue-700"; return <div className={`mb-5 border rounded-2xl px-4 py-3 text-sm ${cls}`}>{children}</div>; }
 function InfoStrip({ children }: { children: React.ReactNode }) { return <AlertBox tone="info"><div className="flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" />{children}</div></AlertBox>; }
 function Empty({ title, text, action }: { title: string; text: string; action?: React.ReactNode }) { return <div className="py-12 text-center"><div className="w-14 h-14 rounded-2xl bg-slate-50 text-slate-300 flex items-center justify-center mx-auto"><BookOpen className="w-6 h-6" /></div><h3 className="font-black mt-4 text-slate-900">{title}</h3><p className="text-sm text-slate-500 mt-1 max-w-md mx-auto">{text}</p>{action && <div className="mt-5">{action}</div>}</div>; }
-function Field({ label, value, onChange, placeholder = "", type = "text" }: any) { return <label className="block"><span className="block text-xs font-black uppercase tracking-wide text-slate-500 mb-2">{label}</span><input type={type} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} className="w-full border border-slate-200 rounded-xl px-4 py-3 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-50" /></label>; }
+function Field({ label, value, onChange, placeholder = "", type = "text", required = false, maxLength }: any) { return <label className="block"><span className="block text-xs font-black uppercase tracking-wide text-slate-500 mb-2">{label}</span><input type={type} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} required={required} maxLength={maxLength} className="w-full border border-slate-200 rounded-xl px-4 py-3 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-50" /></label>; }
 function PasswordField({
   label,
   value,
