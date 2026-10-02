@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { Code, Mic, MessageSquare, Sparkles, Send, Loader2 } from 'lucide-react';
 
+const API_BASE = (window.__APP_CONFIG__?.API_BASE || import.meta.env.VITE_API_BASE || 'http://127.0.0.1:8000').replace(/\/+$/, '');
+
 type AcademicTier = 'PRIMARY' | 'BS_GRADUATION';
 
 interface Message {
@@ -40,7 +42,7 @@ export const AdaptiveWorkspace: React.FC<WorkspaceProps> = ({ userTier, subjectN
     setMessages((prev) => [...prev, { sender: 'assistant', content: '' }]);
 
     try {
-      const response = await fetch('http://127.0.0.1:8000/api/chat/stream', {
+      const response = await fetch(`${API_BASE}/api/chat/stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
