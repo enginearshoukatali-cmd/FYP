@@ -22,9 +22,15 @@ from security import create_access_token, SECRET_KEY, ALGORITHM
 load_dotenv()
 app = FastAPI(title='Khanmigo Professional AI Assistant')
 
+configured_origins = (
+    os.getenv('CORS_ORIGINS')
+    or os.getenv('FRONTEND_URL')
+    or 'http://localhost:5173,http://127.0.0.1:5173'
+)
+allowed_origins = [origin.strip().rstrip('/') for origin in configured_origins.split(',') if origin.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=['*'], 
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=['*'],
     allow_headers=['*'],
@@ -47,8 +53,10 @@ if not API_KEY:
 GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-3.6-flash')
 client = genai.Client(api_key=API_KEY)
 
-DB_NAME = 'khanmigo_fyp.db'
-UPLOAD_DIR = 'uploads'
+APP_DATA_DIR = os.path.abspath(os.getenv('APP_DATA_DIR', '.'))
+os.makedirs(APP_DATA_DIR, exist_ok=True)
+DB_NAME = os.path.join(APP_DATA_DIR, 'khanmigo_fyp.db')
+UPLOAD_DIR = os.path.join(APP_DATA_DIR, 'uploads')
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 # Add these two lines:
 ASSIGNMENT_UPLOAD_DIR = os.path.join(UPLOAD_DIR, 'assignments')
@@ -702,6 +710,7 @@ def stream_btbb_pdf(pdf_url, cache_path=None):
     return StreamingResponse(content(), media_type='application/pdf')
 
 @app.get('/api/health')
+@app.get('/health')
 def health(): 
     return {'status': 'ok', 'service': 'Khanmigo API'}
 
