@@ -1,0 +1,22 @@
+cd backend
+venv\Scripts\Activate
+uvicorn main:app --reload
+
+python generate_token.py
+
+# Configure these values in backend/.env for password recovery email:
+# MAIL_USERNAME=your-sending-email@example.com
+# MAIL_PASSWORD=your-email-provider-app-password
+# FRONTEND_URL=http://localhost:5173
+# SMTP_HOST=smtp.gmail.com
+# SMTP_PORT=465
+
+# Railway textbook cache (persistent storage):
+# 1. Attach a Railway Volume to the backend service with mount path /data.
+# 2. Set the backend service variable BTBB_PDF_CACHE_DIR=/data/curriculum_pdfs.
+# 3. After deployment, run `python warm_curriculum_cache.py` once in the
+#    backend service shell to cache Grade 1-12 books before students use it.
+#    Run it again later to retry titles that failed during a BTBB outage.
+# Choose enough volume capacity for the library; the script prints the total
+# size cached and can resume safely because already-cached books are skipped.
+# Cached PDFs are shared across users and survive service restarts/redeploys.
