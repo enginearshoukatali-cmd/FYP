@@ -54,8 +54,9 @@ branch:
 
 ### API service
 
-- Leave the service root directory at the repository root and set the
-  Dockerfile path to `backend/Dockerfile`.
+- Leave the service root directory at the repository root. The root
+  `Dockerfile` builds and starts the backend API, so Railway can detect it
+  without a monorepo root-directory override.
 - Attach a Railway Volume mounted at `/data`.
 - Add these service variables:
 
