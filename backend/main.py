@@ -53,7 +53,9 @@ if not API_KEY:
 GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-3.6-flash')
 client = genai.Client(api_key=API_KEY)
 
-APP_DATA_DIR = os.path.abspath(os.getenv('APP_DATA_DIR', '.'))
+APP_DATA_DIR = os.path.abspath(
+    os.getenv('APP_DATA_DIR', '/tmp' if os.getenv('VERCEL') else '.')
+)
 os.makedirs(APP_DATA_DIR, exist_ok=True)
 DB_NAME = os.path.join(APP_DATA_DIR, 'khanmigo_fyp.db')
 UPLOAD_DIR = os.path.join(APP_DATA_DIR, 'uploads')
