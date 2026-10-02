@@ -17,20 +17,40 @@ import smtplib
 from email.message import EmailMessage
 from passlib.context import CryptContext
 from jose import JWTError, jwt
-from security import create_access_token, SECRET_KEY, ALGORITHM
-
 load_dotenv()
+
+from security import create_access_token, SECRET_KEY, ALGORITHM
+from Database import DATABASE_URL, get_connection, get_columns
+from storage import save_upload, signed_private_blob_url
+
 app = FastAPI(title='Khanmigo Professional AI Assistant')
 
+if os.getenv('VERCEL') and not DATABASE_URL:
+    raise RuntimeError('DATABASE_URL is required for persistent Vercel deployments.')
+
+DEFAULT_FRONTEND_URL = (
+    'https://fyp-8qqi.vercel.app'
+    if os.getenv('VERCEL')
+    else 'http://localhost:5173'
+)
 configured_origins = (
     os.getenv('CORS_ORIGINS')
     or os.getenv('FRONTEND_URL')
-    or 'http://localhost:5173,http://127.0.0.1:5173'
+    or DEFAULT_FRONTEND_URL
 )
-allowed_origins = [origin.strip().rstrip('/') for origin in configured_origins.split(',') if origin.strip()]
+allowed_origins = list(dict.fromkeys([
+    'http://localhost:5173',
+    'http://127.0.0.1:5173',
+    *(
+        origin.strip().rstrip('/')
+        for origin in configured_origins.split(',')
+        if origin.strip()
+    ),
+]))
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
+    allow_origin_regex=r'https?://(localhost|127\.0\.0\.1)(:\d+)?',
     allow_credentials=True,
     allow_methods=['*'],
     allow_headers=['*'],
@@ -86,13 +106,10 @@ SYSTEM_INSTRUCTION = (
 BASE_SYSTEM_INSTRUCTION = SYSTEM_INSTRUCTION
 
 def db():
-    c = sqlite3.connect(DB_NAME)
-    c.row_factory = sqlite3.Row
-    c.execute('PRAGMA foreign_keys=ON')
-    return c
+    return get_connection(DB_NAME)
 
 def cols(c, t): 
-    return {r['name'] for r in c.execute(f'PRAGMA table_info({t})').fetchall()}
+    return get_columns(c, t)
 
 def addcol(c, t, n, d):
     if n not in cols(c, t): 
@@ -109,10 +126,16 @@ def init_db():
         email TEXT UNIQUE,
         hashed_password TEXT,
         role TEXT,
-        institution_mode TEXT DEFAULT 'University'
+        institution_mode TEXT DEFAULT 'University',
+        qualification TEXT,
+        teaching_subject TEXT,
+        designation TEXT
     )''')
     addcol(c, 'users', 'institution_mode', "TEXT DEFAULT 'University'")
     addcol(c, 'users', 'hashed_password', 'TEXT')
+    addcol(c, 'users', 'qualification', 'TEXT')
+    addcol(c, 'users', 'teaching_subject', 'TEXT')
+    addcol(c, 'users', 'designation', 'TEXT')
     c.execute('''CREATE TABLE IF NOT EXISTS password_reset_tokens(
         token_hash TEXT PRIMARY KEY,
         user_id INTEGER NOT NULL,
@@ -121,25 +144,12 @@ def init_db():
         used_at TEXT,
         FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
     )''')
-
     c.execute('''CREATE TABLE IF NOT EXISTS quiz_attempts(id INTEGER PRIMARY KEY AUTOINCREMENT,quiz_id INTEGER,student_id INTEGER,answers_json TEXT,score REAL,submitted_at DATETIME,UNIQUE(quiz_id,student_id))''')
     
     # 1. ADD THESE THREE LINES RIGHT HERE:
     addcol(c, 'quiz_attempts', 'feedback', 'TEXT')
     addcol(c, 'quiz_attempts', 'status', "TEXT DEFAULT 'submitted'")
     addcol(c, 'quiz_attempts', 'evaluated_by', 'TEXT')
-    c.execute('''CREATE TABLE IF NOT EXISTS invitations(
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        token TEXT UNIQUE NOT NULL,
-        role TEXT NOT NULL,
-        institution_mode TEXT DEFAULT 'University',
-        created_by INTEGER,
-        is_used INTEGER DEFAULT 0,
-        used_by INTEGER,
-        created_at DATETIME,
-        expires_at DATETIME
-    )''')
-    
     c.execute('''CREATE TABLE IF NOT EXISTS conversations(id TEXT PRIMARY KEY,user_id INTEGER,title TEXT,created_at DATETIME,updated_at DATETIME)''')
     c.execute('''CREATE TABLE IF NOT EXISTS messages(id TEXT PRIMARY KEY,conversation_id TEXT,role TEXT,content TEXT,input_type TEXT,transcription TEXT,timestamp DATETIME)''')
     
@@ -166,8 +176,7 @@ def init_db():
         'CREATE INDEX IF NOT EXISTS idx_class_teacher ON classes(teacher_id)',
         'CREATE INDEX IF NOT EXISTS idx_enroll_student ON enrollments(student_id)',
         'CREATE INDEX IF NOT EXISTS idx_assignment_class ON assignments(class_id)',
-        'CREATE INDEX IF NOT EXISTS idx_result_student ON results(student_id)',
-        'CREATE INDEX IF NOT EXISTS idx_invitation_token ON invitations(token)'
+        'CREATE INDEX IF NOT EXISTS idx_result_student ON results(student_id)'
     ]: 
         c.execute(x)
     c.commit()
@@ -184,7 +193,9 @@ class UserRegister(BaseModel):
     password: str = Field(min_length=8, max_length=72)
     role: str
     institution_mode: str = 'University'
-    invitation_code: Optional[str] = None
+    qualification: str = Field(default='', max_length=120)
+    teaching_subject: str = Field(default='', max_length=120)
+    designation: str = Field(default='', max_length=120)
 
 class UserLogin(BaseModel): 
     email: EmailStr
@@ -196,12 +207,6 @@ class ForgotPasswordSchema(BaseModel):
 class ResetPasswordSchema(BaseModel):
     token: str
     password: str = Field(min_length=8, max_length=72)
-
-class GenerateInvitationRequest(BaseModel):
-    admin_id: int
-    target_role: str
-    institution_mode: str = 'University'
-    valid_days: int = 7
 
 class ClassCreate(BaseModel): 
     teacher_id: int
@@ -295,13 +300,14 @@ class TimetableCreate(BaseModel):
     end_time: str
     room: str = ''
 
-VALID_ROLES = {'student', 'teacher', 'staff', 'super_admin'}
+VALID_ROLES = {'student', 'teacher', 'staff'}
 
 def user(uid):
     c = db()
     r = c.execute('SELECT id, full_name, email, role, institution_mode FROM users WHERE id=?', (uid,)).fetchone()
     c.close()
     if not r: raise HTTPException(404, 'User not found.')
+    if r['role'] not in VALID_ROLES: raise HTTPException(403, 'This account role is no longer supported.')
     return r
 
 def role(uid, roles):
@@ -337,7 +343,7 @@ def member_class(cid, uid):
     ok = (
         (u['role'] == 'teacher' and r['teacher_id'] == uid) or
         (u['role'] == 'student' and bool(c.execute('SELECT 1 FROM enrollments WHERE class_id=? AND student_id=?', (cid, uid)).fetchone())) or
-        u['role'] in {'staff', 'super_admin'}
+        u['role'] == 'staff'
     )
     c.close()
     if not ok: raise HTTPException(403, 'You are not connected to this class.')
@@ -360,6 +366,12 @@ def authenticated_user(uid, authorization, allowed_roles):
     if account['role'] not in allowed_roles:
         raise HTTPException(403, 'You do not have permission for this action.')
     return account
+
+
+def profile_picture_url(value):
+    if os.getenv('VERCEL') and value and value.startswith('https://'):
+        return signed_private_blob_url(value)
+    return value
 
 
 class BTBBReaderParser(HTMLParser):
@@ -890,84 +902,39 @@ def summarize_curriculum_book(book_id: int, req: dict):
             os.remove(temp_path)
 
 # ==========================================
-# SUPER ADMIN INVITATION CODE GENERATION
-# ==========================================
-@app.post('/api/admin/generate-invitation')
-def generate_invitation(req: GenerateInvitationRequest):
-    role(req.admin_id, {'super_admin', 'superadmin'})
-    target = req.target_role.lower()
-    if target not in {'teacher', 'staff'}:
-        raise HTTPException(400, 'Invitation tokens can only be created for teacher or staff.')
-    
-    prefix = "TCH" if target == "teacher" else "STF"
-    token = f"KHAN-{prefix}-{secrets.token_hex(3).upper()}"
-    expiry = datetime.now() + timedelta(days=req.valid_days)
-    
-    c = db()
-    c.execute('''INSERT INTO invitations(token, role, institution_mode, created_by, created_at, expires_at)
-                 VALUES(?, ?, ?, ?, ?, ?)''', 
-              (token, target, req.institution_mode, req.admin_id, datetime.now(), expiry))
-    c.commit()
-    c.close()
-    return {
-        'token': token,
-        'role': target,
-        'institution_mode': req.institution_mode,
-        'expires_at': expiry.strftime('%Y-%m-%d %H:%M:%S'),
-        'message': f'Invitation ID generated for {target.capitalize()}'
-    }
-
-@app.get('/api/admin/invitations/{admin_id}')
-def list_invitations(admin_id: int):
-    role(admin_id, {'super_admin', 'superadmin'})
-    c = db()
-    rows = c.execute('''SELECT i.*, u.full_name AS used_by_name 
-                        FROM invitations i 
-                        LEFT JOIN users u ON u.id = i.used_by 
-                        ORDER BY i.created_at DESC''').fetchall()
-    c.close()
-    return [dict(r) for r in rows]
-
-# ==========================================
 # AUTHENTICATION ENDPOINTS
 # ==========================================
 @app.post('/api/auth/register')
 def register(x: UserRegister):
-    r = 'super_admin' if x.role.lower() in {'superadmin', 'super_admin'} else x.role.lower()
+    r = x.role.lower()
     if r not in VALID_ROLES: 
         raise HTTPException(403, 'Invalid role.')
     
     inst = x.institution_mode if x.institution_mode in {'School', 'College', 'University'} else 'University'
+    qualification = x.qualification.strip()
+    teaching_subject = x.teaching_subject.strip()
+    designation = x.designation.strip()
+    if r == 'teacher' and (not qualification or not teaching_subject):
+        raise HTTPException(400, 'Teachers must provide their qualification and teaching subject.')
+    if r == 'staff' and (not qualification or not designation):
+        raise HTTPException(400, 'Staff must provide their qualification and designation.')
     c = db()
 
-    inv_id = None
-    if r in {'teacher', 'staff'}:
-        if not x.invitation_code or not x.invitation_code.strip():
-            c.close()
-            raise HTTPException(400, f'An Invitation Token from Super Admin is required to register as {r.capitalize()}.')
-        
-        inv = c.execute('''SELECT * FROM invitations 
-                          WHERE token = ? AND role = ? AND is_used = 0''', 
-                       (x.invitation_code.strip().upper(), r)).fetchone()
-        if not inv:
-            c.close()
-            raise HTTPException(400, 'Invalid, expired, or already used invitation token.')
-        
-        if datetime.strptime(inv['expires_at'], '%Y-%m-%d %H:%M:%S.%f' if '.' in inv['expires_at'] else '%Y-%m-%d %H:%M:%S') < datetime.now():
-            c.close()
-            raise HTTPException(400, 'This invitation token has expired.')
-        
-        inv_id = inv['id']
-        inst = inv['institution_mode'] or inst
-
     try:
-        cur = c.execute('INSERT INTO users(full_name,email,hashed_password,role,institution_mode) VALUES(?,?,?,?,?)', 
-                  (x.full_name.strip(), x.email.lower(), get_password_hash(x.password), r, inst))
-        new_user_id = cur.lastrowid
-
-        if inv_id:
-            c.execute('UPDATE invitations SET is_used = 1, used_by = ? WHERE id = ?', (new_user_id, inv_id))
-
+        c.execute(
+            '''INSERT INTO users(full_name,email,hashed_password,role,institution_mode,qualification,teaching_subject,designation)
+               VALUES(?,?,?,?,?,?,?,?)''',
+            (
+                x.full_name.strip(),
+                x.email.lower(),
+                get_password_hash(x.password),
+                r,
+                inst,
+                qualification if r in {'teacher', 'staff'} else None,
+                teaching_subject if r == 'teacher' else None,
+                designation if r == 'staff' else None,
+            ),
+        )
         c.commit()
         return {'message': 'Account created successfully!', 'role': r, 'institution_mode': inst}
     except sqlite3.IntegrityError: 
@@ -980,13 +947,13 @@ def login(x: UserLogin):
     c = db()
     r = c.execute('SELECT * FROM users WHERE email=?', (x.email.lower(),)).fetchone()
     c.close()
-    if not r or not verify_password(x.password, r['hashed_password']): 
+    if not r or r['role'] not in VALID_ROLES or not verify_password(x.password, r['hashed_password']):
         raise HTTPException(401, 'Invalid email or password')
     return {
         'user_id': r['id'], 
         'full_name': r['full_name'], 
         'email': r['email'], 
-        'role': 'superadmin' if r['role'] == 'super_admin' else r['role'], 
+        'role': r['role'],
         'institution_mode': r['institution_mode'] or 'University',
         'access_token': create_access_token(
             {'sub': str(r['id']), 'role': r['role']},
@@ -1015,7 +982,7 @@ def forgot(x: ForgotPasswordSchema):
         )
         c.commit()
         try:
-            frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:5173').rstrip('/')
+            frontend_url = os.getenv('FRONTEND_URL', DEFAULT_FRONTEND_URL).rstrip('/')
             reset_url = f'{frontend_url}/?reset_token={token}'
             message = EmailMessage()
             message.set_content(
@@ -1349,7 +1316,7 @@ def update_class_join_access(cid: int, update: ClassJoinAccessUpdate, authorizat
 
 @app.get('/api/classes/{cid:int}')
 def class_detail(cid: int, user_id: int, authorization: Optional[str] = Header(None)):
-    actor = authenticated_user(user_id, authorization, {'teacher', 'student', 'staff', 'super_admin'})
+    actor = authenticated_user(user_id, authorization, {'teacher', 'student', 'staff'})
     x = member_class(cid, user_id)
     c = db()
     t = c.execute('SELECT full_name,email FROM users WHERE id=?', (x['teacher_id'],)).fetchone()
@@ -1388,7 +1355,7 @@ def class_detail(cid: int, user_id: int, authorization: Optional[str] = Header(N
 
 @app.get('/api/classes/all')
 def all_classes(requester_id: int, authorization: Optional[str] = Header(None)):
-    authenticated_user(requester_id, authorization, {'staff', 'super_admin'})
+    authenticated_user(requester_id, authorization, {'staff'})
     c = db()
     rows = c.execute('''SELECT x.id,x.name,x.subject,x.institution_mode,x.grade_level,x.section,x.course_code,x.description,
                                x.is_active,x.created_at,(SELECT COUNT(*) FROM enrollments e WHERE e.class_id=x.id) student_count,
@@ -1454,13 +1421,12 @@ async def submit_assignment_with_file(
         # Check if it's a valid extension
         ext = os.path.splitext(file.filename)[1].lower()
         filename = f"sub_{aid}_{student_id}_{uuid.uuid4().hex[:6]}{ext}"
-        filepath = os.path.join(ASSIGNMENT_UPLOAD_DIR, filename)
-        
-        # Save the file to the hard drive
-        with open(filepath, 'wb') as buffer:
-            shutil.copyfileobj(file.file, buffer)
-        
-        file_url = f"/uploads/assignments/{filename}"
+        file_url = save_upload(
+            f'assignments/{filename}',
+            await file.read(),
+            file.content_type or 'application/octet-stream',
+            UPLOAD_DIR,
+        )
 
     # Save to the database
     c.execute('''INSERT INTO assignment_submissions(assignment_id,student_id,text_content,file_name,submitted_at,status) 
@@ -1512,7 +1478,13 @@ def assignment_submissions_teacher(aid: int, teacher_id: int, authorization: Opt
     ''', (aid,)).fetchall()
 
     c.close()
-    return [dict(row) for row in rows]
+    submissions = [dict(row) for row in rows]
+    if os.getenv('VERCEL'):
+        for submission in submissions:
+            file_url = submission['file_name']
+            if file_url and file_url.startswith('https://'):
+                submission['file_name'] = signed_private_blob_url(file_url)
+    return submissions
 
 # ============================================================
 # GRADE SUBMISSION & PUBLISH TO RESULTS TABLE
@@ -1828,7 +1800,7 @@ def create_result(x: ResultCreate):
 
 @app.get('/api/announcements/user/{uid}')
 def announcements(uid: int, authorization: Optional[str] = Header(None)):
-    authenticated_user(uid, authorization, {'student', 'teacher', 'staff', 'super_admin'})
+    authenticated_user(uid, authorization, {'student', 'teacher', 'staff'})
     c = db()
     r = c.execute('''SELECT a.*,a.body AS message,u.full_name author_name,x.name class_name FROM announcements a JOIN users u ON u.id=a.author_id LEFT JOIN classes x ON x.id=a.class_id WHERE a.class_id IS NULL OR a.class_id IN(SELECT class_id FROM enrollments WHERE student_id=?) OR a.class_id IN(SELECT id FROM classes WHERE teacher_id=?) ORDER BY a.created_at DESC''', (uid, uid)).fetchall()
     c.close()
@@ -1836,7 +1808,7 @@ def announcements(uid: int, authorization: Optional[str] = Header(None)):
 
 @app.post('/api/announcements')
 def create_announcement(x: AnnouncementCreate, authorization: Optional[str] = Header(None)):
-    u = authenticated_user(x.author_id, authorization, {'teacher', 'staff', 'super_admin'})
+    u = authenticated_user(x.author_id, authorization, {'teacher', 'staff'})
     if not x.title.strip() or len(x.title.strip()) > 160 or not x.body.strip():
         raise HTTPException(422, 'Announcement title and message are required.')
     if x.class_id and u['role'] == 'teacher': teacher_class(x.class_id, x.author_id)
@@ -1876,20 +1848,18 @@ def create_timetable(x: TimetableCreate):
 @app.get('/api/users')
 def users(requester_id: int, role_filter: Optional[str] = None, role: Optional[str] = None):
     u = user(requester_id)
-    if u['role'] not in {'staff', 'super_admin'}: raise HTTPException(403, 'Only staff/admin can view directory.')
+    if u['role'] != 'staff': raise HTTPException(403, 'Only staff can view the directory.')
     c = db()
     r = c.execute('SELECT id,full_name,email,role,institution_mode FROM users ORDER BY role,full_name').fetchall()
     c.close()
     out = [dict(x) for x in r]
-    for x in out:
-        if x['role'] == 'super_admin': x['role'] = 'superadmin'
     rf = role_filter or role
     return [x for x in out if not rf or x['role'] == rf]
 
 @app.get('/api/departments')
 def departments(requester_id: int):
     u = user(requester_id)
-    if u['role'] not in {'staff', 'super_admin'}: raise HTTPException(403, 'Not allowed.')
+    if u['role'] != 'staff': raise HTTPException(403, 'Not allowed.')
     c = db()
     r = c.execute("SELECT COALESCE(NULLIF(subject,''),'General') department,COUNT(*) class_count,COUNT(DISTINCT teacher_id) teacher_count FROM classes GROUP BY COALESCE(NULLIF(subject,''),'General') ORDER BY department").fetchall()
     c.close()
@@ -1898,7 +1868,7 @@ def departments(requester_id: int):
 @app.get('/api/reports/overview')
 def report(requester_id: int):
     u = user(requester_id)
-    if u['role'] not in {'staff', 'super_admin'}: raise HTTPException(403, 'Not allowed.')
+    if u['role'] != 'staff': raise HTTPException(403, 'Not allowed.')
     c = db()
     d = {k: c.execute(f"SELECT COUNT(*) n FROM {t}").fetchone()['n'] for k, t in [('students', 'users'), ('classes', 'classes'), ('assignments', 'assignments'), ('quizzes', 'quizzes')]}
     d['students'] = c.execute("SELECT COUNT(*) n FROM users WHERE role='student'").fetchone()['n']
@@ -2571,7 +2541,7 @@ from fastapi.staticfiles import StaticFiles
 PROFILE_UPLOAD_DIR = os.path.join(UPLOAD_DIR, 'profiles')
 os.makedirs(PROFILE_UPLOAD_DIR, exist_ok=True)
 
-if not any(route.path == '/uploads' for route in app.routes):
+if not os.getenv('VERCEL') and not any(route.path == '/uploads' for route in app.routes):
     app.mount('/uploads', StaticFiles(directory=UPLOAD_DIR), name='uploads')
 
 class UpdateProfileSecurePayload(BaseModel):
@@ -2582,8 +2552,8 @@ class UpdateProfileSecurePayload(BaseModel):
 
 @app.get('/api/users/{uid}/profile-full')
 def get_user_profile_full(uid: int, requester_id: int, authorization: Optional[str] = Header(None)):
-    req_u = authenticated_user(requester_id, authorization, {'student', 'teacher', 'staff', 'super_admin'})
-    if requester_id != uid and req_u['role'] not in {'super_admin', 'superadmin'}:
+    authenticated_user(requester_id, authorization, {'student', 'teacher', 'staff'})
+    if requester_id != uid:
         raise HTTPException(403, 'Unauthorized access.')
     
     c = db()
@@ -2593,6 +2563,7 @@ def get_user_profile_full(uid: int, requester_id: int, authorization: Optional[s
         raise HTTPException(404, 'User not found.')
     
     data = dict(u)
+    data['profile_pic'] = profile_picture_url(data['profile_pic'])
     if u['role'] == 'student':
         classes = c.execute('SELECT x.id, x.name, x.subject FROM enrollments e JOIN classes x ON x.id=e.class_id WHERE e.student_id=?', (uid,)).fetchall()
         data['total_classes'] = len(classes)
@@ -2605,8 +2576,8 @@ def get_user_profile_full(uid: int, requester_id: int, authorization: Optional[s
 
 @app.post('/api/users/{uid}/profile')
 def update_user_profile_secure(uid: int, payload: UpdateProfileSecurePayload, authorization: Optional[str] = Header(None)):
-    req_u = authenticated_user(payload.requester_id, authorization, {'student', 'teacher', 'staff', 'super_admin'})
-    if payload.requester_id != uid and req_u['role'] not in {'super_admin', 'superadmin'}:
+    authenticated_user(payload.requester_id, authorization, {'student', 'teacher', 'staff'})
+    if payload.requester_id != uid:
         raise HTTPException(403, 'Unauthorized edit attempt.')
     
     c = db()
@@ -2631,7 +2602,9 @@ def update_user_profile_secure(uid: int, payload: UpdateProfileSecurePayload, au
     c.commit()
     updated = c.execute('SELECT id, full_name, email, role, institution_mode, profile_pic FROM users WHERE id=?', (uid,)).fetchone()
     c.close()
-    return dict(updated)
+    data = dict(updated)
+    data['profile_pic'] = profile_picture_url(data['profile_pic'])
+    return data
 
 @app.post('/api/users/{uid}/avatar')
 async def upload_user_avatar_secure(
@@ -2640,8 +2613,8 @@ async def upload_user_avatar_secure(
     file: UploadFile = File(...),
     authorization: Optional[str] = Header(None),
 ):
-    req_u = authenticated_user(requester_id, authorization, {'student', 'teacher', 'staff', 'super_admin'})
-    if requester_id != uid and req_u['role'] not in {'super_admin', 'superadmin'}:
+    authenticated_user(requester_id, authorization, {'student', 'teacher', 'staff'})
+    if requester_id != uid:
         raise HTTPException(403, 'Unauthorized action.')
 
     allowed_image_types = {
@@ -2663,14 +2636,17 @@ async def upload_user_avatar_secure(
         raise HTTPException(400, 'The uploaded file does not match its image format.')
 
     filename = f"avatar_{uid}_{uuid.uuid4().hex[:12]}{image_type[0]}"
-    filepath = os.path.join(PROFILE_UPLOAD_DIR, filename)
-    with open(filepath, 'wb') as image_file:
-        image_file.write(image_content)
-
-    relative_path = f"/uploads/profiles/{filename}"
+    relative_path = save_upload(
+        f'profiles/{filename}',
+        image_content,
+        file.content_type or 'application/octet-stream',
+        UPLOAD_DIR,
+    )
     c = db()
     c.execute('UPDATE users SET profile_pic=? WHERE id=?', (relative_path, uid))
     c.commit()
     updated = c.execute('SELECT id, full_name, email, role, institution_mode, profile_pic FROM users WHERE id=?', (uid,)).fetchone()
     c.close()
-    return {'message': 'Avatar updated.', 'user': dict(updated)}
+    data = dict(updated)
+    data['profile_pic'] = profile_picture_url(data['profile_pic'])
+    return {'message': 'Avatar updated.', 'user': data}
