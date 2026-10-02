@@ -1,7 +1,7 @@
 -- PostgreSQL Schema for Multi-Tier Khanmigo AI Tutor
 
 CREATE TYPE academic_tier AS ENUM ('PRIMARY', 'MIDDLE', 'SECONDARY', 'HIGHER_SEC', 'BS_GRADUATION');
-CREATE TYPE user_role AS ENUM ('STUDENT', 'TEACHER', 'ADMIN');
+CREATE TYPE user_role AS ENUM ('STUDENT', 'TEACHER', 'STAFF');
 CREATE TYPE subject_category AS ENUM ('STEM', 'HUMANITIES', 'LANGUAGES', 'ISLAMIYAT', 'BUSINESS');
 
 CREATE TABLE users (
