@@ -6,7 +6,6 @@ import {
   AlertCircle,
   ArrowLeft,
   BarChart3,
-  Bell,
   BookOpen,
   BookCopy,
   Camera,
@@ -21,10 +20,8 @@ import {
   Eye,
   EyeOff,
   FileCheck2,
-  FileIcon,
   FileText,
   GraduationCap,
-  History,
   Key,
   LayoutGrid,
   Loader2,
@@ -48,7 +45,7 @@ import {
   X,
 } from "lucide-react";
 
-const API_BASE = import.meta.env.VITE_API_BASE || "http://127.0.0.1:8000";
+const API_BASE = (window.__APP_CONFIG__?.API_BASE || import.meta.env.VITE_API_BASE || "http://127.0.0.1:8000").replace(/\/+$/, "");
 const MAX_FILES = 5;
 const MAX_FILE_SIZE = 20 * 1024 * 1024;
 const MAX_AVATAR_FILE_SIZE = 10 * 1024 * 1024;
@@ -321,16 +318,6 @@ const TEACHER_TOOLS: ToolConfig[] = [
   { id: "chat-gpt", title: "AI Teaching Assistant", description: "Chat with the educational AI assistant.", category: "Learn", subtitle: "AI assistant" },
 ];
 
-const STUDENT_TOOLS: ToolConfig[] = [
-  { id: "ai-tutor", title: "Student AI Tutor", description: "Get guided learning without direct homework answers.", category: "Learning", subtitle: "Step-by-step tutoring" },
-  { id: "homework-helper", title: "Homework Helper", description: "Get hints and a structured approach to your work.", category: "Homework", subtitle: "Guidance & hints" },
-  { id: "concept-explainer", title: "Concept Explainer", description: "Explain difficult topics in simple language.", category: "Learn", subtitle: "Simple explanations" },
-  { id: "summarize-notes", title: "Summarize Notes", description: "Turn long notes into concise study material.", category: "Review", subtitle: "Quick summaries" },
-  { id: "flashcard-gen", title: "Flashcard Generator", description: "Create study flashcards from your material.", category: "Practice", subtitle: "Memory practice" },
-  { id: "practice-quiz", title: "Practice Quiz", description: "Generate practice questions for self-assessment.", category: "Testing", subtitle: "Self assessment" },
-  { id: "progress-analyzer", title: "Progress Analyzer", description: "Analyze results and identify weak areas.", category: "Analytics", subtitle: "Learning insights" },
-];
-
 const STAFF_TOOLS: ToolConfig[] = [
   { id: "email-drafter", title: "Email Drafter", description: "Draft professional institutional emails.", category: "Communication", subtitle: "Professional email" },
   { id: "meeting-summarizer", title: "Meeting Summarizer", description: "Turn notes into minutes and action items.", category: "Admin", subtitle: "Minutes & actions" },
@@ -340,18 +327,6 @@ const STAFF_TOOLS: ToolConfig[] = [
   { id: "attendance-report", title: "Attendance Reporter", description: "Analyze attendance records and thresholds.", category: "Reports", subtitle: "Attendance analysis" },
   { id: "announcement-creator", title: "Announcement Creator", description: "Draft official institutional announcements.", category: "Communication", subtitle: "Official notices" },
 ];
-
-const SUPERADMIN_TOOLS: ToolConfig[] = [
-  { id: "system-audit", title: "System Audit Analyzer", description: "Analyze supplied audit/security data.", category: "Security", subtitle: "Audit insights" },
-  { id: "policy-drafter", title: "Policy Drafter", description: "Draft institutional policies and procedures.", category: "Admin", subtitle: "Policy documents" },
-];
-
-function toolsForRole(role: Role) {
-  if (role === "teacher") return TEACHER_TOOLS;
-  if (role === "student") return STUDENT_TOOLS;
-  if (role === "staff") return STAFF_TOOLS;
-  return SUPERADMIN_TOOLS;
-}
 
 function normalizeRole(role: string): Role {
   return role === "super_admin" ? "superadmin" : (role as Role);
@@ -375,7 +350,8 @@ export default function App() {
     }
   });
 
-  const [teacherAttendance, setTeacherAttendance] = useState<any[]>([]);
+  const [, setTeacherAttendance] = useState<any[]>([]);
+  const [, setIsAttachmentOpen] = useState(false);
   const [authMode, setAuthMode] = useState<"login" | "register" | "forgot" | "reset">("login");
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
@@ -440,7 +416,6 @@ export default function App() {
   const [deletingConvId, setDeletingConvId] = useState<string | null>(null);
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [fileError, setFileError] = useState("");
-  const [isAttachmentOpen, setIsAttachmentOpen] = useState(false);
   const [speechLanguage, setSpeechLanguage] = useState("en-US");
   const [isRecording, setIsRecording] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
@@ -491,7 +466,6 @@ export default function App() {
 
   const [studentClasses, setStudentClasses] = useState<any[]>([]);
   const [studentAssignments, setStudentAssignments] = useState<any[]>([]);
-  const [studentSubmissionId, setStudentSubmissionId] = useState<number | null>(null);
   const [studentQuizzes, setStudentQuizzes] = useState<any[]>([]);
   const [studentAttendance, setStudentAttendance] = useState<any[]>([]);
   const [studentResults, setStudentResults] = useState<any[]>([]);
@@ -510,7 +484,6 @@ export default function App() {
   const [studentLoading, setStudentLoading] = useState(false);
   const [studentError, setStudentError] = useState("");
   const [studentSuccess, setStudentSuccess] = useState("");
-  const [studentDashboardData, setStudentDashboardData] = useState<any>(null);
 
   const [toolSubject, setToolSubject] = useState("");
   const [toolTopic, setToolTopic] = useState("");
@@ -1299,19 +1272,6 @@ export default function App() {
     nav("tool-form");
   };
 
-  const gradeSubmission = async (submission: Submission) => {
-    if (!user || !selectedAssignment) return;
-    const score = prompt(`Score out of ${selectedAssignment.total_marks}`, submission.score == null ? "" : String(submission.score));
-    if (score === null) return;
-    const feedback = prompt("Teacher feedback", submission.feedback || "") || "";
-    try {
-      await api(`/api/assignments/submissions/${submission.id}/grade?teacher_id=${user.user_id}&score=${encodeURIComponent(score)}&feedback=${encodeURIComponent(feedback)}`, { method: "PUT" });
-      await loadSubmissions(selectedAssignment);
-    } catch (e: any) {
-      alert(e?.message || "Unable to grade submission.");
-    }
-  };
-
   const openGradeModal = (sub: any) => {
     setgradingSubmission(sub);
     setManualScore(sub.score !== null && sub.score !== undefined ? String(sub.score) : "");
@@ -1341,7 +1301,7 @@ export default function App() {
       };
 
       const response = await fetch(
-        `http://127.0.0.1:8000/api/assignments/submissions/${gradingSubmission.id}/grade`,
+        `${API_BASE}/api/assignments/submissions/${gradingSubmission.id}/grade`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -1618,11 +1578,6 @@ export default function App() {
     const present = studentAttendance.filter((x) => x.status === "present" || x.status === "late").length;
     return Math.round((present / studentAttendance.length) * 100);
   }, [studentAttendance]);
-
-  const selectedClassAssignments = useMemo(() => {
-    if (!studentSelectedClass) return [];
-    return studentAssignments.filter((x) => Number(x.class_id) === Number(studentSelectedClass.id));
-  }, [studentSelectedClass, studentAssignments]);
 
   const nav = (id: Tab) => { setActiveTab(id); setMobileSidebar(false); };
 
