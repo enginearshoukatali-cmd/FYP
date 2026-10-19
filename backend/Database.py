@@ -33,7 +33,9 @@ def postgres_sql(sql):
         'BIGSERIAL PRIMARY KEY',
         sql,
         flags=re.IGNORECASE,
-    ).replace('?', '%s')
+    )
+    statement = re.sub(r'\bDATETIME\b', 'TIMESTAMP', statement, flags=re.IGNORECASE)
+    statement = statement.replace('?', '%s')
     match = re.match(
         r'\s*INSERT\s+INTO\s+([a-z_][a-z0-9_]*)\s*\(([^)]*)\)',
         statement,
