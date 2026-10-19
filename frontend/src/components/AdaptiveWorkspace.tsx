@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { Code, Mic, MessageSquare, Sparkles, Send, Loader2 } from 'lucide-react';
-
-const API_BASE = (window.__APP_CONFIG__?.API_BASE || import.meta.env.VITE_API_BASE || 'http://127.0.0.1:8000').replace(/\/+$/, '');
+import { API_BASE, API_CONFIG_ERROR } from '../apiConfig';
 
 type AcademicTier = 'PRIMARY' | 'BS_GRADUATION';
 
@@ -42,6 +41,7 @@ export const AdaptiveWorkspace: React.FC<WorkspaceProps> = ({ userTier, subjectN
     setMessages((prev) => [...prev, { sender: 'assistant', content: '' }]);
 
     try {
+      if (!API_BASE) throw new Error(API_CONFIG_ERROR);
       const response = await fetch(`${API_BASE}/api/chat/stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -76,7 +76,7 @@ export const AdaptiveWorkspace: React.FC<WorkspaceProps> = ({ userTier, subjectN
       console.error('Error streaming response:', error);
       setMessages((prev) => [
         ...prev,
-        { sender: 'assistant', content: 'Connection error. Please check if the FastAPI backend is running.' }
+        { sender: 'assistant', content: error instanceof Error ? error.message : 'Connection error. Please check if the FastAPI backend is running.' }
       ]);
     } finally {
       setIsLoading(false);

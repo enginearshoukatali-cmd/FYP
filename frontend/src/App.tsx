@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { API_BASE, API_CONFIG_ERROR } from "./apiConfig";
 import {
   Activity,
   AlertCircle,
@@ -43,7 +44,6 @@ import {
   X,
 } from "lucide-react";
 
-const API_BASE = (window.__APP_CONFIG__?.API_BASE || import.meta.env.VITE_API_BASE || "http://127.0.0.1:8000").replace(/\/+$/, "");
 const MAX_FILES = 5;
 const MAX_FILE_SIZE = 20 * 1024 * 1024;
 const MAX_AVATAR_FILE_SIZE = 10 * 1024 * 1024;
@@ -529,6 +529,7 @@ export default function App() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const api = async (endpoint: string, options: RequestInit = {}) => {
+    if (!API_BASE) throw new Error(API_CONFIG_ERROR);
     let accessToken = "";
     try {
       accessToken = JSON.parse(localStorage.getItem("khanmigo_user") || "{}").access_token || "";

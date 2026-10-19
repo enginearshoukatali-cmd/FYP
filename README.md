@@ -67,6 +67,21 @@ endpoints cannot reliably accept files larger than 4.5 MB.
 The API initializes its database tables on startup. Existing local or
 ephemeral SQLite records are not copied into Neon.
 
+## Deploy the frontend to Vercel
+
+Create a separate Vercel project from this repository with the project root
+directory set to `frontend` and the framework preset set to Vite. Set this
+Production environment variable to the public origin of the deployed API
+(without a trailing slash), then redeploy the frontend:
+
+```dotenv
+VITE_API_BASE=https://<your-api-project-domain>
+```
+
+On the API project, set `CORS_ORIGINS` and `FRONTEND_URL` to the exact public
+frontend origin. The Docker-only `API_BASE_URL` setting does not configure a
+Vite build deployed directly to Vercel.
+
 ## Deploy to Railway
 
 The repository contains separate Dockerfiles for Railway's frontend and API
