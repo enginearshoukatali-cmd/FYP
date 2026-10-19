@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 from jose import JWTError, jwt
 from passlib.context import CryptContext
+from passlib.exc import UnknownHashError
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -28,13 +29,20 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # --- یہ نیا کوڈ پیسٹ کریں ---
 def get_password_hash(password: str) -> str:
-    # Bcrypt ki 72-byte limit ko handle karne ke liye password truncate kar rahe hain
-    safe_password = password[:72]
-    return pwd_context.hash(safe_password)
+    return pwd_context.hash(_bcrypt_safe_password(password))
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    safe_password = plain_password[:72]
-    return pwd_context.verify(safe_password, hashed_password)
+    if not hashed_password:
+        return False
+    try:
+        return pwd_context.verify(_bcrypt_safe_password(plain_password), hashed_password)
+    except (TypeError, ValueError, UnknownHashError):
+        return False
+
+
+def _bcrypt_safe_password(password: str) -> str:
+    """Keep bcrypt input within 72 bytes without splitting a UTF-8 character."""
+    return password.encode("utf-8")[:72].decode("utf-8", errors="ignore")
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     to_encode = data.copy()

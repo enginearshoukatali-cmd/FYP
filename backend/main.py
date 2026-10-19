@@ -15,11 +15,10 @@ from pydantic import BaseModel, EmailStr, Field
 from google import genai
 import smtplib
 from email.message import EmailMessage
-from passlib.context import CryptContext
 from jose import JWTError, jwt
 load_dotenv()
 
-from security import create_access_token, SECRET_KEY, ALGORITHM
+from security import create_access_token, get_password_hash, verify_password, SECRET_KEY, ALGORITHM
 from Database import DATABASE_URL, get_connection, get_columns
 from storage import save_upload, signed_private_blob_url
 
@@ -55,15 +54,6 @@ app.add_middleware(
     allow_methods=['*'],
     allow_headers=['*'],
 )
-
-# --- Security Configuration ---
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
-def get_password_hash(password: str) -> str:
-    return pwd_context.hash(password)
-
-def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return pwd_context.verify(plain_password, hashed_password)
 
 # --- AI Model Configuration ---
 API_KEY = os.getenv('GEMINI_API_KEY')
