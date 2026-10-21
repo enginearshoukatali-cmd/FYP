@@ -34,3 +34,6 @@ frontend/coverage/
 .DS_Store
 Thumbs.db
 Microsoft/
+
+# Local JaaS signing keys
+backend/jaas-keys/

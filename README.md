@@ -9,6 +9,19 @@ and book-grounded AI tools.
 - `frontend/` — React, TypeScript, and Vite web application.
 - `backend/` — FastAPI application, database schema, and BTBB curriculum tools.
 
+Railway is the current deployment target. The Vercel sections below are optional
+instructions for deployments intentionally hosted on Vercel.
+
+## LUAWMS university course materials
+
+In the University Curriculum portal, select a LUAWMS course and choose **AI se
+material banwayein** to open the AI Teaching Assistant with course context and
+a ready-to-edit request. AI can create a clearly labeled draft from general
+subject knowledge. Teachers can attach their approved syllabus, notes, or
+authorized book material in the AI chat; when files are attached, AI is
+instructed to follow them as the primary source. Generated lessons are drafts
+and should be checked against the department-approved syllabus.
+
 ## Run locally
 
 ### Backend
@@ -125,6 +138,26 @@ The frontend image injects `API_BASE_URL` at container startup. Once both
 services have public domains, use those exact domains in the variables.
 Configure `MAIL_USERNAME`, `MAIL_PASSWORD`, and optionally `SMTP_HOST` /
 `SMTP_PORT` on the API service if account recovery is required.
+
+Student submissions, classroom attachments, and teacher resource files are
+served through authenticated API endpoints with ownership or classroom checks;
+they are not exposed as public static files. Keep the Railway volume attached
+to the API service and do not publish its `/data` directory.
+
+## Online classes and meetings
+
+Teachers can schedule meetings for an active classroom; the application only
+returns join details to its teacher and enrolled students. Staff and teachers
+can schedule private meetings with one another. Meeting records are stored in
+the application database, and the video room is embedded in the application
+using Jitsi Meet's IFrame API. The default public Jitsi service hosts the video
+call; anyone given a room link may try to join it. To use JaaS, set
+`JAAS_APP_ID`, `JAAS_API_KEY_ID`, and the matching `JAAS_PRIVATE_KEY` (or
+`JAAS_PRIVATE_KEY_PATH`) on the backend only. The backend issues a short-lived,
+room-limited JWT to each authenticated participant; never put the private key
+or a sample JWT in frontend code. The App ID is public, but the API private key
+must stay secret. Camera and microphone access require HTTPS in production
+(localhost is permitted for local development).
 
 To pre-cache BTBB textbooks, open the API service shell and run:
 
