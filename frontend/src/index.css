@@ -108,6 +108,228 @@
   background: #d4dfad;
 }
 
+.dashboard-hero-image {
+  position: relative;
+  overflow: hidden;
+  background: #dce9dd;
+}
+
+.app-workspace-shell {
+  background:
+    radial-gradient(ellipse at 8% 4%, rgb(203 232 212 / 58%), transparent 34rem),
+    radial-gradient(ellipse at 96% 92%, rgb(208 226 237 / 60%), transparent 38rem),
+    linear-gradient(135deg, #f3f8f4 0%, #f5f7f4 52%, #f0f5f8 100%);
+}
+
+.app-page-surface {
+  position: relative;
+  isolation: isolate;
+  background-color: rgb(247 250 248 / 76%);
+  background-image:
+    radial-gradient(ellipse at 2% 0%, rgb(202 231 211 / 43%), transparent 30rem),
+    radial-gradient(ellipse at 100% 38%, rgb(207 226 237 / 38%), transparent 34rem),
+    linear-gradient(rgb(255 255 255 / 34%), rgb(255 255 255 / 34%));
+  background-attachment: fixed;
+}
+
+.app-sidebar-surface {
+  background:
+    radial-gradient(ellipse at 0% 0%, rgb(204 231 211 / 62%), transparent 23rem),
+    radial-gradient(ellipse at 100% 100%, rgb(216 232 234 / 58%), transparent 27rem),
+    linear-gradient(180deg, #f7fbf7 0%, #f1f7f3 55%, #f6f9f8 100%);
+  box-shadow: 8px 0 30px rgb(27 67 47 / 4%);
+}
+
+.app-mobile-header {
+  background: rgb(247 251 248 / 92%);
+  backdrop-filter: blur(16px);
+}
+
+.dashboard-hero-image::after {
+  position: absolute;
+  inset: 0;
+  content: "";
+  background: linear-gradient(90deg, rgb(18 75 57 / 18%), transparent 48%), linear-gradient(0deg, rgb(18 75 57 / 8%), transparent 55%);
+  pointer-events: none;
+}
+
+.dashboard-hero-image img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: inherit;
+  object-fit: cover;
+  object-position: center 42%;
+}
+
+.dashboard-entry-card {
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  overflow: hidden;
+  width: 100%;
+  min-height: 13rem;
+  padding: 1.25rem;
+  border: 1px solid rgb(255 255 255 / 45%);
+  border-radius: 1.5rem;
+  background-color: #176348;
+  background-position: center;
+  background-size: cover;
+  color: white;
+  text-align: left;
+  box-shadow: 0 12px 28px rgb(15 23 42 / 10%);
+  transition: transform 180ms ease, box-shadow 180ms ease;
+}
+
+.dashboard-entry-card::before {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  content: "";
+  background: linear-gradient(90deg, rgb(7 38 30 / 88%) 0%, rgb(7 38 30 / 54%) 55%, rgb(7 38 30 / 16%) 100%), linear-gradient(0deg, rgb(7 38 30 / 45%), transparent 65%);
+  transition: opacity 180ms ease;
+}
+
+.dashboard-entry-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 18px 34px rgb(15 23 42 / 16%);
+}
+
+.dashboard-entry-card:hover::before {
+  opacity: 0.88;
+}
+
+.dashboard-entry-card:focus-visible {
+  outline: 3px solid #16835d;
+  outline-offset: 3px;
+}
+
+.dashboard-entry-icon {
+  display: grid;
+  width: 3rem;
+  height: 3rem;
+  place-items: center;
+  border: 1px solid rgb(255 255 255 / 30%);
+  border-radius: 1rem;
+  background: rgb(255 255 255 / 15%);
+  color: white;
+  backdrop-filter: blur(8px);
+}
+
+.dashboard-entry-arrow {
+  position: absolute;
+  right: 1.25rem;
+  bottom: 1.4rem;
+  display: grid;
+  width: 2.5rem;
+  height: 2.5rem;
+  place-items: center;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 17%);
+  font-size: 1.5rem;
+  transition: transform 180ms ease, background-color 180ms ease;
+}
+
+.dashboard-entry-card:hover .dashboard-entry-arrow {
+  transform: translateX(3px);
+  background: rgb(255 255 255 / 27%);
+}
+
+.dashboard-links-panel {
+  position: relative;
+  isolation: isolate;
+  border: 1px solid #d8e9dd;
+  background:
+    radial-gradient(ellipse at 92% 5%, rgb(255 255 255 / 85%), transparent 38%),
+    linear-gradient(130deg, #eaf4ec 0%, #f4f6ee 55%, #e9f2f6 100%);
+  box-shadow: 0 10px 30px rgb(28 63 45 / 6%);
+}
+
+.dashboard-links-panel::after {
+  position: absolute;
+  z-index: -1;
+  right: -2rem;
+  bottom: -5rem;
+  width: 13rem;
+  height: 13rem;
+  border: 1px solid rgb(22 114 80 / 10%);
+  border-radius: 999px;
+  content: "";
+  box-shadow: 0 0 0 1.5rem rgb(22 114 80 / 3%), 0 0 0 3rem rgb(22 114 80 / 2%);
+  pointer-events: none;
+}
+
+.modal-backdrop {
+  background:
+    radial-gradient(ellipse at 15% 18%, rgb(44 128 93 / 30%), transparent 34rem),
+    radial-gradient(ellipse at 88% 88%, rgb(90 122 160 / 26%), transparent 32rem),
+    rgb(8 22 18 / 66%);
+  backdrop-filter: blur(8px);
+}
+
+.modal-shell {
+  border: 1px solid rgb(255 255 255 / 80%);
+  background: #fff;
+  box-shadow: 0 32px 90px rgb(4 21 15 / 30%);
+}
+
+.modal-heading {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  background: linear-gradient(115deg, #124b39 0%, #167250 55%, #2f8062 100%);
+}
+
+.modal-heading::after {
+  position: absolute;
+  z-index: -1;
+  top: -4.5rem;
+  right: 4rem;
+  width: 12rem;
+  height: 12rem;
+  border: 1px solid rgb(255 255 255 / 15%);
+  border-radius: 999px;
+  content: "";
+  box-shadow: 0 0 0 1.5rem rgb(255 255 255 / 4%), 0 0 0 3rem rgb(255 255 255 / 3%);
+  pointer-events: none;
+}
+
+.modal-content {
+  background:
+    radial-gradient(ellipse at 95% 0%, rgb(220 238 226 / 68%), transparent 22rem),
+    linear-gradient(145deg, #fbfdfb 0%, #f5f8f5 65%, #f7f8fb 100%);
+}
+
+@media (max-width: 639px) {
+  .modal-backdrop {
+    align-items: flex-start;
+  }
+
+  .modal-shell {
+    margin-top: auto;
+    margin-bottom: auto;
+    border-radius: 1.4rem;
+  }
+
+  .dashboard-entry-card {
+    min-height: 12rem;
+    padding: 1rem;
+    border-radius: 1.25rem;
+  }
+
+  .dashboard-entry-arrow {
+    right: 1rem;
+    bottom: 1.1rem;
+  }
+
+  .dashboard-hero-image img {
+    max-height: 270px;
+    object-position: center 38%;
+  }
+}
+
 .auth-orbit {
   animation: auth-orbit 24s linear infinite;
 }
@@ -126,5 +348,11 @@
 @media (prefers-reduced-motion: reduce) {
   .auth-orbit {
     animation: none;
+  }
+}
+
+@media (max-width: 767px) {
+  .app-page-surface {
+    background-attachment: scroll;
   }
 }
