@@ -22,6 +22,62 @@ authorized book material in the AI chat; when files are attached, AI is
 instructed to follow them as the primary source. Generated lessons are drafts
 and should be checked against the department-approved syllabus.
 
+## Responsible AI across education portals
+
+The AI chat uses the authenticated account role and institution mode to adapt its
+guidance for student, teacher, and staff workflows. Student help is tutoring
+that builds understanding rather than completing active assessments. Teacher
+tools generate reviewable drafts aligned to the selected class level and
+workflow. Staff assistance is limited to drafting and summarizing supplied
+facts; consequential learner or employment decisions remain with authorized
+people.
+
+AI-generated grades and feedback are suggestions, not final decisions. Teachers
+must review them before publishing. The assignment checker does not estimate
+whether a student used AI, because writing-style estimates are not reliable
+evidence. Curriculum-grounded tools should stay within their selected source
+and acknowledge missing or unclear evidence. Avoid sharing unnecessary
+identifying or sensitive student information with AI tools.
+
+Students and teachers can ask the chat about a selected BTBB book; those
+answers are instructed to use that book as the source and say when it does not
+cover the question. Generated quizzes are checked for the requested question
+count, four distinct choices, a matching correct answer, and a non-empty
+explanation. These checks catch malformed output, but they do not prove factual
+correctness; educators should verify content against the textbook before use.
+
+### Fast textbook chapter and topic loading
+
+The teacher selects PDF pages (or slide pages in a slide-based PDF) in the
+reader. Only those selected pages are processed to extract their headings and
+topics, and chapter/topic results are cached for that exact page selection.
+Quiz and assignment generation and AI review retain the same selected-page
+scope. Text-based pages are sent as bounded excerpts; if selected pages are
+scanned and have no extractable text, the AI receives a temporary PDF containing
+only those selected pages. The complete book is not extracted for this workflow.
+The PDF itself is cached for faster opens; the first download of an uncached
+book can still take time.
+
+To warm PDFs and extract the same selected page range for eligible digital
+books, run this from `backend/` using an authorized teacher account:
+
+```powershell
+py -3 warm_curriculum_cache.py --extract-outlines --teacher-id 123 --pages "1-8, 12"
+```
+
+This prewarming downloads the selected PDFs and makes one Gemini outline request
+for each book that has no current cached outline for that page selection. It can
+take time and use AI service quota; use `--grade` or `--book-id` to limit the work. Keep the configured
+`BTBB_PDF_CACHE_DIR` on persistent storage so prepared PDFs and extracted
+outlines remain available after a service restart.
+
+When evaluating a classifier, use the standard confusion-matrix definitions:
+precision = TP / (TP + FP), recall = TP / (TP + FN), accuracy = (TP + TN) /
+(TP + TN + FP + FN), and F1 = 2 × precision × recall / (precision + recall).
+In particular, precision's denominator is TP + FP, not TP + TN. These aggregate
+metrics do not establish that an individual educational decision is fair or
+correct.
+
 ## Run locally
 
 ### Backend

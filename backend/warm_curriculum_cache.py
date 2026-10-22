@@ -34,6 +34,53 @@ def get_json(api_base_url, path):
     raise RuntimeError(last_error or 'Unknown API error')
 
 
+def post_json(api_base_url, path, payload):
+    request = Request(
+        f'{api_base_url}{path}',
+        data=json.dumps(payload).encode('utf-8'),
+        headers={
+            'Content-Type': 'application/json',
+            'User-Agent': 'BalochistanAcadmyCurriculumCache/1.0',
+        },
+        method='POST',
+    )
+    last_error = None
+    for attempt in range(REQUEST_ATTEMPTS):
+        try:
+            with urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
+                return json.load(response)
+        except HTTPError as exc:
+            detail = exc.read(2000).decode('utf-8', errors='replace')
+            last_error = f'HTTP {exc.code}: {detail}'
+            if exc.code < 500 and exc.code not in {408, 425, 429}:
+                break
+        except (URLError, TimeoutError, OSError) as exc:
+            last_error = str(exc)
+
+        if attempt + 1 < REQUEST_ATTEMPTS:
+            time.sleep(2 ** attempt)
+    raise RuntimeError(last_error or 'Unknown API error')
+
+
+def parse_pages(selection):
+    pages = set()
+    for part in selection.split(','):
+        value = part.strip()
+        if not value:
+            continue
+        if '-' in value:
+            start_text, end_text = value.split('-', 1)
+            start, end = int(start_text.strip()), int(end_text.strip())
+        else:
+            start = end = int(value)
+        if start < 1 or end < start or end - start > 99:
+            raise ValueError('Page ranges must be positive and contain no more than 100 pages.')
+        pages.update(range(start, end + 1))
+    if not pages or len(pages) > 100:
+        raise ValueError('Select between 1 and 100 pages.')
+    return sorted(pages)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description='Download official BTBB e-books into the backend persistent cache.'
@@ -58,11 +105,31 @@ def main():
         help='Only prepare this book ID; may be supplied more than once.',
     )
     parser.add_argument(
+        '--extract-outlines',
+        action='store_true',
+        help='Also extract and persist chapters/topics with Gemini (one-time processing per changed PDF).',
+    )
+    parser.add_argument(
+        '--teacher-id',
+        type=int,
+        help='Teacher account ID required when --extract-outlines is used.',
+    )
+    parser.add_argument(
+        '--pages',
+        help='Comma-separated selected page numbers/ranges, required with --extract-outlines (e.g. 1-8, 12).',
+    )
+    parser.add_argument(
         '--include-other-levels',
         action='store_true',
         help='Include Primer and General titles when preparing the full catalogue.',
     )
     args = parser.parse_args()
+    if args.extract_outlines and (not args.teacher_id or not args.pages):
+        parser.error('--teacher-id and --pages are required with --extract-outlines.')
+    try:
+        selected_pages = parse_pages(args.pages) if args.extract_outlines else []
+    except ValueError as exc:
+        parser.error(str(exc))
     api_base_url = args.base_url.rstrip('/')
 
     try:
@@ -102,6 +169,16 @@ def main():
                 f'[{index}/{len(digital_books)}] READY '
                 f'{title} ({size_bytes / (1024 * 1024):.1f} MiB)'
             )
+            if args.extract_outlines:
+                outline = post_json(
+                    api_base_url,
+                    f'/api/curriculum/books/{book_id}/chapters',
+                    {'teacher_id': args.teacher_id, 'pages': selected_pages},
+                )
+                print(
+                    f'[{index}/{len(digital_books)}] OUTLINE READY '
+                    f'{title} ({len(outline.get("chapters", []))} chapters)'
+                )
         except (RuntimeError, ValueError, TypeError) as exc:
             failures.append((book_id, title, str(exc)))
             print(f'[{index}/{len(digital_books)}] FAILED {title}: {exc}')

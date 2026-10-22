@@ -263,6 +263,32 @@ interface CurriculumChapter {
   topics: string[];
 }
 
+function parseSelectedPdfPages(selection: string, pageCount: number): number[] | null {
+  const pages = new Set<number>();
+  for (const part of selection.split(",")) {
+    const value = part.trim();
+    if (!value) continue;
+    const match = value.match(/^(\d+)(?:\s*-\s*(\d+))?$/);
+    if (!match) return null;
+    const start = Number(match[1]);
+    const end = Number(match[2] || match[1]);
+    if (start < 1 || end < start || end > pageCount || end - start > 99) return null;
+    for (let page = start; page <= end; page += 1) pages.add(page);
+  }
+  return pages.size > 0 && pages.size <= 100 ? [...pages].sort((a, b) => a - b) : null;
+}
+
+function formatCurriculumPages(pages: Assignment["curriculum_pages"]): string {
+  if (Array.isArray(pages)) return pages.join(", ");
+  if (!pages) return "";
+  try {
+    const parsed: unknown = JSON.parse(pages);
+    return Array.isArray(parsed) ? parsed.join(", ") : pages;
+  } catch {
+    return pages;
+  }
+}
+
 interface UniversityProgram {
   id: string;
   name: string;
@@ -352,6 +378,12 @@ interface Assignment {
   score?: number | null;
   feedback?: string | null;
   status?: string | null;
+  curriculum_book_id?: number | null;
+  curriculum_book_title?: string | null;
+  curriculum_book_grade?: number | string | null;
+  curriculum_chapter?: string | null;
+  curriculum_topic?: string | null;
+  curriculum_pages?: string | number[] | null;
 }
 
 interface Submission {
@@ -992,6 +1024,9 @@ export default function App() {
   const [selectedCurriculumBook, setSelectedCurriculumBook] = useState<CurriculumBook | null>(null);
   const [curriculumPdfLoading, setCurriculumPdfLoading] = useState(false);
   const [curriculumPdfError, setCurriculumPdfError] = useState("");
+  const [curriculumPageCount, setCurriculumPageCount] = useState(0);
+  const [curriculumPageSelection, setCurriculumPageSelection] = useState("");
+  const [curriculumPageBatch, setCurriculumPageBatch] = useState(0);
   const [curriculumChapters, setCurriculumChapters] = useState<CurriculumChapter[]>([]);
   const [universityDepartments, setUniversityDepartments] = useState<UniversityDepartment[]>([]);
   const [universityCatalogLoading, setUniversityCatalogLoading] = useState(false);
@@ -1162,7 +1197,17 @@ export default function App() {
   const [isCreatingClass, setIsCreatingClass] = useState(false);
   const [newClass, setNewClass] = useState({ name: "", subject: "", grade_level: "", section: "", course_code: "", description: "" });
   const [isCreatingAssignment, setIsCreatingAssignment] = useState(false);
-  const [newAssignment, setNewAssignment] = useState({ class_id: "", title: "", description: "", due_date: "", total_marks: "100" });
+  const [newAssignment, setNewAssignment] = useState({
+    class_id: "",
+    title: "",
+    description: "",
+    due_date: "",
+    total_marks: "100",
+    curriculum_book_id: null as number | null,
+    curriculum_chapter: "",
+    curriculum_topic: "",
+    curriculum_pages: [] as number[],
+  });
 
   const [gradingSubmission, setgradingSubmission] = useState<any | null>(null);
   const [manualScore, setManualScore] = useState<string>("");
@@ -1200,6 +1245,7 @@ export default function App() {
   const [quizDifficulty, setQuizDifficulty] = useState("Medium");
   const [quizSource, setQuizSource] = useState<"ai" | "curriculum">("ai");
   const [quizCurriculumBookId, setQuizCurriculumBookId] = useState("");
+  const [quizCurriculumPageSelection, setQuizCurriculumPageSelection] = useState("");
   const [quizCurriculumChapter, setQuizCurriculumChapter] = useState("");
   const [quizCurriculumTopic, setQuizCurriculumTopic] = useState("");
   const [quizCurriculumLoading, setQuizCurriculumLoading] = useState(false);
@@ -1528,13 +1574,19 @@ export default function App() {
     setCurriculumPdfError("");
     setSelectedSubject(book.subject);
     setCurriculumChapters([]);
+    setCurriculumPageCount(0);
+    setCurriculumPageSelection("");
+    setCurriculumPageBatch(0);
     setCurriculumOutlineLoaded(false);
     setSelectedCurriculumTopic("");
     setCurriculumOutlineError("");
     setCurriculumActionError("");
     try {
-      await api(`/api/curriculum/books/${book.id}/prepare`);
-      if (requestId === curriculumOpenRequestRef.current) setCurriculumPdfLoading(false);
+      const prepared = await api(`/api/curriculum/books/${book.id}/prepare`);
+      if (requestId === curriculumOpenRequestRef.current) {
+        setCurriculumPageCount(Number(prepared.page_count) || 0);
+        setCurriculumPdfLoading(false);
+      }
     } catch (error: any) {
       if (requestId === curriculumOpenRequestRef.current) {
         setCurriculumPdfLoading(false);
@@ -1545,12 +1597,17 @@ export default function App() {
 
   const loadCurriculumChapters = async (book: CurriculumBook) => {
     if (!user || user.role !== "teacher") return;
+    const pages = parseSelectedPdfPages(curriculumPageSelection, curriculumPageCount);
+    if (!pages) {
+      setCurriculumOutlineError(`Enter valid PDF page numbers or ranges between 1 and ${curriculumPageCount || "the last page"}, for example 4-8, 12.`);
+      return;
+    }
     setCurriculumOutlineLoading(true);
     setCurriculumOutlineError("");
     try {
       const result = await api(`/api/curriculum/books/${book.id}/chapters`, {
         method: "POST",
-        body: JSON.stringify({ teacher_id: user.user_id }),
+        body: JSON.stringify({ teacher_id: user.user_id, pages }),
       });
       const chapters = (Array.isArray(result.chapters) ? result.chapters : [])
         .map((chapter: any) => ({
@@ -1560,6 +1617,7 @@ export default function App() {
         .filter((chapter: CurriculumChapter) => chapter.title || chapter.topics.length);
       setCurriculumChapters(chapters);
       setCurriculumOutlineLoaded(true);
+      setCurriculumPageSelection(pages.join(", "));
       setSelectedCurriculumTopic(chapters[0]?.topics[0] || chapters[0]?.title || "");
     } catch (error: any) {
       setCurriculumOutlineError(error?.message || "Could not read this textbook outline.");
@@ -1568,8 +1626,79 @@ export default function App() {
     }
   };
 
+  const toggleCurriculumPage = (page: number) => {
+    const current = parseSelectedPdfPages(curriculumPageSelection, curriculumPageCount) || [];
+    const next = current.includes(page)
+      ? current.filter((selected) => selected !== page)
+      : current.length < 100 ? [...current, page] : current;
+    setCurriculumPageSelection(next.sort((a, b) => a - b).join(", "));
+    setCurriculumChapters([]);
+    setCurriculumOutlineLoaded(false);
+    setSelectedCurriculumTopic("");
+    setCurriculumOutlineError("");
+  };
+
+  const extractQuizCurriculumChapters = async (book: CurriculumBook) => {
+    if (!user) return;
+    const pages = parseSelectedPdfPages(quizCurriculumPageSelection, curriculumPageCount);
+    if (!pages) {
+      setQuizCurriculumError(`Select valid PDF pages between 1 and ${curriculumPageCount || "the last page"} first.`);
+      return;
+    }
+    setQuizCurriculumLoading(true);
+    setQuizCurriculumError("");
+    try {
+      const result = await api(`/api/curriculum/books/${book.id}/chapters`, {
+        method: "POST",
+        body: JSON.stringify({ teacher_id: user.user_id, pages }),
+      });
+      const chapters = (Array.isArray(result.chapters) ? result.chapters : [])
+        .map((chapter: any) => ({ title: String(chapter.title || "Chapter"), topics: Array.isArray(chapter.topics) ? chapter.topics.map(String) : [] }))
+        .filter((chapter: CurriculumChapter) => chapter.title || chapter.topics.length);
+      setCurriculumChapters(chapters);
+      setQuizCurriculumPageSelection(pages.join(", "));
+      if (chapters.length) {
+        setQuizCurriculumChapter(chapters[0].title);
+        setQuizCurriculumTopic(chapters[0].topics[0] || chapters[0].title);
+      } else {
+        setQuizCurriculumError("No chapter or topic headings were found in the selected pages. Try selecting the chapter contents pages.");
+      }
+    } catch (error: any) {
+      setQuizCurriculumError(error?.message || "Could not extract chapter headings from these pages.");
+    } finally {
+      setQuizCurriculumLoading(false);
+    }
+  };
+
+  const renderQuizPageSelector = () => {
+    const book = curriculumBooks.find((item) => String(item.id) === quizCurriculumBookId);
+    if (!book) return null;
+    return <div className="md:col-span-2 rounded-xl border border-emerald-100 bg-emerald-50/70 p-3">
+      <Field
+        label="Selected PDF pages / slides"
+        value={quizCurriculumPageSelection}
+        onChange={(value: string) => {
+          setQuizCurriculumPageSelection(value);
+          setCurriculumChapters([]);
+          setQuizCurriculumChapter("");
+          setQuizCurriculumTopic("");
+        }}
+        placeholder="e.g. 4-8, 12"
+      />
+      <p className="mt-2 text-xs text-slate-600">{curriculumPageCount || "…"} pages available · {parseSelectedPdfPages(quizCurriculumPageSelection, curriculumPageCount)?.length || 0} selected · only selected pages are used</p>
+      <Button className="mt-3" variant="secondary" disabled={quizCurriculumLoading || !curriculumPageCount} onClick={() => void extractQuizCurriculumChapters(book)}>
+        {quizCurriculumLoading ? <><Loader2 className="h-4 w-4 animate-spin" />Extracting selected pages...</> : <><BookOpen className="h-4 w-4" />Extract chapter & topics</>}
+      </Button>
+    </div>;
+  };
+
   const generateCurriculumQuiz = async () => {
     if (!user || !selectedCurriculumBook || !selectedCurriculumTopic) return;
+    const pages = parseSelectedPdfPages(curriculumPageSelection, curriculumPageCount);
+    if (!pages) {
+      setCurriculumActionError("Select valid textbook PDF pages before generating a quiz.");
+      return;
+    }
     if (!curriculumClassId) {
       setCurriculumActionError("Select a classroom before generating a quiz.");
       return;
@@ -1586,7 +1715,9 @@ export default function App() {
           teacher_id: user.user_id,
           class_id: classroom.id,
           book_id: selectedCurriculumBook.id,
+          pages,
           subject: selectedCurriculumBook.subject,
+          chapter: curriculumChapters.find((chapter) => chapter.topics.includes(selectedCurriculumTopic))?.title || selectedCurriculumTopic,
           topic: selectedCurriculumTopic,
           grade_level: String(selectedCurriculumBook.grade),
           question_count: Number(quizCount),
@@ -1605,6 +1736,11 @@ export default function App() {
 
   const draftCurriculumAssignment = async () => {
     if (!user || !selectedCurriculumBook || !selectedCurriculumTopic) return;
+    const pages = parseSelectedPdfPages(curriculumPageSelection, curriculumPageCount);
+    if (!pages) {
+      setCurriculumActionError("Select valid textbook PDF pages before drafting an assignment.");
+      return;
+    }
     if (!curriculumClassId) {
       setCurriculumActionError("Select a classroom before drafting an assignment.");
       return;
@@ -1621,6 +1757,7 @@ export default function App() {
           class_id: classroom.id,
           chapter: curriculumChapters.find((chapter) => chapter.topics.includes(selectedCurriculumTopic))?.title || selectedCurriculumTopic,
           topic: selectedCurriculumTopic,
+          pages,
         }),
       });
       setSelectedTeacherClass(classroom);
@@ -1630,6 +1767,10 @@ export default function App() {
         description: draft.description,
         due_date: "",
         total_marks: "100",
+        curriculum_book_id: selectedCurriculumBook.id,
+        curriculum_chapter: curriculumChapters.find((chapter) => chapter.topics.includes(selectedCurriculumTopic))?.title || selectedCurriculumTopic,
+        curriculum_topic: selectedCurriculumTopic,
+        curriculum_pages: pages,
       });
       setIsCreatingAssignment(true);
       nav("assignments");
@@ -2580,9 +2721,23 @@ export default function App() {
           description: newAssignment.description,
           due_date: newAssignment.due_date,
           total_marks: Number(newAssignment.total_marks) || 100,
+          curriculum_book_id: newAssignment.curriculum_book_id,
+          curriculum_chapter: newAssignment.curriculum_chapter,
+          curriculum_topic: newAssignment.curriculum_topic,
+          curriculum_pages: newAssignment.curriculum_pages,
         }),
       });
-      setNewAssignment({ class_id: "", title: "", description: "", due_date: "", total_marks: "100" });
+      setNewAssignment({
+        class_id: "",
+        title: "",
+        description: "",
+        due_date: "",
+        total_marks: "100",
+        curriculum_book_id: null,
+        curriculum_chapter: "",
+        curriculum_topic: "",
+        curriculum_pages: [],
+      });
       setIsCreatingAssignment(false);
       await loadTeacherPortal();
     } catch (e: any) {
@@ -2770,22 +2925,19 @@ export default function App() {
     setQuizCurriculumChapter("");
     setQuizCurriculumTopic("");
     setCurriculumChapters([]);
+    setCurriculumPageCount(0);
+    setQuizCurriculumPageSelection("");
+    setCurriculumPageBatch(0);
     if (!bookId || !user) return;
     const book = curriculumBooks.find((item) => String(item.id) === bookId);
     if (!book) return;
     setQuizCurriculumLoading(true);
     setQuizCurriculumError("");
     try {
-      const result = await api(`/api/curriculum/books/${book.id}/chapters`, {
-        method: "POST",
-        body: JSON.stringify({ teacher_id: user.user_id }),
-      });
-      const chapters = (Array.isArray(result.chapters) ? result.chapters : [])
-        .map((chapter: any) => ({ title: String(chapter.title || "Chapter"), topics: Array.isArray(chapter.topics) ? chapter.topics.map(String) : [] }))
-        .filter((chapter: CurriculumChapter) => chapter.title || chapter.topics.length);
-      setCurriculumChapters(chapters);
+      const prepared = await api(`/api/curriculum/books/${book.id}/prepare`);
+      setCurriculumPageCount(Number(prepared.page_count) || 0);
     } catch (error: any) {
-      setQuizCurriculumError(error?.message || "Could not read this textbook outline.");
+      setQuizCurriculumError(error?.message || "Could not prepare this textbook PDF.");
     } finally {
       setQuizCurriculumLoading(false);
     }
@@ -2803,7 +2955,9 @@ export default function App() {
       const book = curriculumBooks.find((item) => String(item.id) === quizCurriculumBookId);
       if (!book) { setTeacherPortalError("Select an official textbook."); return; }
       if (!quizCurriculumChapter || !quizCurriculumTopic) { setTeacherPortalError("Select a chapter and topic from the textbook."); return; }
-      payload = { teacher_id: user.user_id, class_id: classId, book_id: book.id, subject: book.subject, chapter: quizCurriculumChapter, topic: quizCurriculumTopic, grade_level: String(book.grade), question_count: Number(quizCount), difficulty: quizDifficulty };
+      const pages = parseSelectedPdfPages(quizCurriculumPageSelection, curriculumPageCount);
+      if (!pages) { setTeacherPortalError("Select valid textbook pages and extract their chapter/topic before generating the quiz."); return; }
+      payload = { teacher_id: user.user_id, class_id: classId, book_id: book.id, pages, subject: book.subject, chapter: quizCurriculumChapter, topic: quizCurriculumTopic, grade_level: String(book.grade), question_count: Number(quizCount), difficulty: quizDifficulty };
     } else {
       if (!toolTopic.trim()) { setTeacherPortalError("Enter a topic for the AI generated quiz."); return; }
       payload = { teacher_id: user.user_id, class_id: classId, subject: toolSubject, topic: toolTopic.trim(), grade_level: selectedTeacherClass?.grade_level || "", question_count: Number(quizCount), difficulty: quizDifficulty };
@@ -2841,7 +2995,9 @@ export default function App() {
             const book = curriculumBooks.find((item) => String(item.id) === quizCurriculumBookId);
             if (!book) throw new Error("Select an official textbook.");
             if (!quizCurriculumChapter || !quizCurriculumTopic) throw new Error("Select a chapter and topic from the textbook.");
-            result = await api("/api/teacher/quizzes/generate-and-save", { method: "POST", body: JSON.stringify({ teacher_id: user.user_id, class_id: classId, book_id: book.id, subject: book.subject, chapter: quizCurriculumChapter, topic: quizCurriculumTopic, grade_level: String(book.grade), question_count: Number(quizCount), difficulty: quizDifficulty }) });
+            const pages = parseSelectedPdfPages(quizCurriculumPageSelection, curriculumPageCount);
+            if (!pages) throw new Error("Select valid textbook pages and extract their chapter/topic first.");
+            result = await api("/api/teacher/quizzes/generate-and-save", { method: "POST", body: JSON.stringify({ teacher_id: user.user_id, class_id: classId, book_id: book.id, pages, subject: book.subject, chapter: quizCurriculumChapter, topic: quizCurriculumTopic, grade_level: String(book.grade), question_count: Number(quizCount), difficulty: quizDifficulty }) });
           } else {
             if (!toolTopic.trim()) throw new Error("Quiz topic is required.");
             result = await api("/api/teacher/quizzes/generate-and-save", { method: "POST", body: JSON.stringify({ teacher_id: user.user_id, class_id: classId, subject: toolSubject, topic: toolTopic, grade_level: selectedTeacherClass?.grade_level || "", question_count: Number(quizCount), difficulty: quizDifficulty }) });
@@ -2940,6 +3096,10 @@ export default function App() {
     if (selectedCurriculumBook) {
       fd.append("curriculum_book_id", String(selectedCurriculumBook.id));
       fd.append("curriculum_topic", selectedCurriculumTopic);
+      if (user.role === "teacher") {
+        const pages = parseSelectedPdfPages(curriculumPageSelection, curriculumPageCount);
+        if (pages) fd.append("curriculum_pages", JSON.stringify(pages));
+      }
     }
     files.forEach((file) => fd.append("files", file));
     try {
@@ -3255,6 +3415,7 @@ export default function App() {
                 </div>
                 <h2 className="font-black text-lg mt-5">{a.title}</h2>
                 <p className="text-sm text-slate-500 mt-1">{a.class_name}</p>
+                {a.curriculum_book_id && <p className="mt-2 rounded-lg bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-900">Curriculum: {a.curriculum_book_title} · Chapter {a.curriculum_chapter} · Topic {a.curriculum_topic} · PDF pages {formatCurriculumPages(a.curriculum_pages)}</p>}
                 <p className="text-sm text-slate-600 mt-3 line-clamp-3">{a.description || "No description."}</p>
                 <Button className="w-full mt-5" onClick={() => { setStudentSelectedAssignment(a); setStudentAssignmentText(""); nav("student-assignment"); }}>
                   {a.submission_id ? "View / Resubmit" : "Start Assignment"}
@@ -3274,6 +3435,7 @@ export default function App() {
         <button onClick={() => nav("assignments")} className="inline-flex items-center gap-2 text-sm font-bold text-slate-500 hover:text-blue-600 mb-5"><ArrowLeft className="w-4 h-4" />Back to Assignments</button>
         <Header title={studentSelectedAssignment.title} subtitle={`Total Marks: ${studentSelectedAssignment.total_marks || 100}`} />
         <SectionCard title="Instructions">
+          {studentSelectedAssignment.curriculum_book_id && <div className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-950"><p className="font-black">Required curriculum source</p><p className="mt-1">{studentSelectedAssignment.curriculum_book_title} · Grade {studentSelectedAssignment.curriculum_book_grade} · Chapter {studentSelectedAssignment.curriculum_chapter} · Topic {studentSelectedAssignment.curriculum_topic}</p><p className="mt-1 text-xs font-semibold">Use the teacher-selected PDF pages: {formatCurriculumPages(studentSelectedAssignment.curriculum_pages)}</p><p className="mt-2">Answer from this selected textbook/topic. Your teacher will review how well your response follows it; relevant correct work can still receive partial marks.</p></div>}
           <p className="text-sm text-slate-700 whitespace-pre-wrap">{studentSelectedAssignment.description || "No instructions provided."}</p>
         </SectionCard>
 
@@ -3338,6 +3500,7 @@ export default function App() {
                 <div className="w-11 h-11 rounded-2xl bg-indigo-50 text-indigo-700 flex items-center justify-center mb-4"><CheckSquare className="w-5 h-5" /></div>
                 <h3 className="text-xl font-black text-slate-900">{q.title}</h3>
                 <p className="text-sm text-slate-500 mt-1">{q.topic || q.class_name}</p>
+                {q.curriculum_book_id && <p className="mt-2 rounded-lg bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-900">{q.curriculum_book_title} · Chapter {q.curriculum_chapter} · Topic {q.curriculum_topic}</p>}
                 {q.attempt_id
                   ? <><Badge>Submitted</Badge><Button className="w-full mt-4" variant="ghost" disabled>Already submitted</Button></>
                   : <Button className="w-full mt-6" onClick={() => openStudentQuiz(q)}>Start Quiz</Button>}
@@ -3355,6 +3518,7 @@ export default function App() {
       <Page>
         <button onClick={() => nav("quizzes")} className="inline-flex items-center gap-2 text-sm font-bold text-slate-500 hover:text-blue-600 mb-5"><ArrowLeft className="w-4 h-4" />Back to Quizzes</button>
         <Header title={studentSelectedQuiz.title} subtitle={`Topic: ${studentSelectedQuiz.topic || "Assessment"}`} />
+        {studentSelectedQuiz.curriculum_book_id && <div className="mb-5 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-950"><p className="font-black">Curriculum-based quiz</p><p className="mt-1">{studentSelectedQuiz.curriculum_book_title} · Grade {studentSelectedQuiz.curriculum_book_grade} · Chapter {studentSelectedQuiz.curriculum_chapter} · Topic {studentSelectedQuiz.curriculum_topic}</p><p className="mt-1 text-xs font-semibold">Teacher-selected PDF pages: {formatCurriculumPages(studentSelectedQuiz.curriculum_pages)}</p><p className="mt-2">Questions are based on this source. Read each question carefully and choose the answer supported by the selected topic.</p></div>}
         <div className="space-y-6">
           {Array.isArray(studentSelectedQuiz.questions) && studentSelectedQuiz.questions.map((q: any, idx: number) => (
             <SectionCard key={idx} title={`Question ${idx + 1}`}>
@@ -3722,7 +3886,7 @@ const renderStudentResults = () => {
         </div>
         <p className="mt-3 text-xs leading-5 text-slate-600">{user?.role === "student" ? "AI gives hints first so you can think for yourself. Generated content is not an official LUAWMS syllabus; confirm details with your teacher." : "No file attached: AI creates a general-knowledge draft and labels it for teacher review. With a file attached: AI follows your uploaded material as the primary source. Generated content is not an official LUAWMS syllabus."}</p>
       </section>}
-      {selectedUniversityCourse && semester && <section ref={universityCourseDetailRef} className="mt-5 scroll-mt-6 rounded-2xl border border-emerald-200 bg-emerald-50 p-5"><p className="text-xs font-black uppercase tracking-wider text-emerald-800">Course details</p><h3 className="mt-1 text-lg font-black text-slate-950">{selectedUniversityCourse.title}</h3><p className="mt-1 text-sm text-slate-700">{selectedUniversityCourse.code} · {selectedUniversityCourse.credit_hours || "Credit hours not listed"} · {semester.name} · {program?.name}{track && track.name !== "Core" ? ` · ${track.name}` : ""}</p>{user?.role === "teacher" && <div className="mt-4 flex flex-wrap gap-2"><Button variant="secondary" onClick={() => { setToolSubject(`${program?.name || "LUAWMS"} · ${selectedUniversityCourse.title}`); setToolTopic(selectedUniversityCourse.title); setQuizSource("ai"); nav("quizzes"); }}><Sparkles className="h-4 w-4" />Create quiz for this course</Button><Button variant="secondary" onClick={() => { setNewAssignment((current) => ({ ...current, class_id: selectedTeacherClass?.id ? String(selectedTeacherClass.id) : current.class_id, title: `${selectedUniversityCourse.code} ${selectedUniversityCourse.title}`.trim(), description: `LUAWMS ${program?.name}, ${semester.name}. Course: ${selectedUniversityCourse.title} (${selectedUniversityCourse.code}). Add the assignment instructions and submission requirements for your class.` })); setIsCreatingAssignment(true); nav("assignments"); }}><ClipboardList className="h-4 w-4" />Create assignment</Button><Button variant="ghost" onClick={() => { setNewClass({ name: selectedUniversityCourse.title, subject: selectedUniversityCourse.title, grade_level: "University - Undergraduate", section: "", course_code: selectedUniversityCourse.code, description: `LUAWMS ${program?.name}, ${semester.name}. ${selectedUniversityCourse.title} (${selectedUniversityCourse.code}), ${selectedUniversityCourse.credit_hours} credit hours.` }); setIsCreatingClass(true); nav("classes"); }}><Plus className="h-4 w-4" />Create classroom for course</Button></div>}<p className="mt-3 text-xs leading-5 text-slate-500">AI-generated explanations and teaching materials are drafts. Verify them against the latest department-approved syllabus.</p></section>}
+      {selectedUniversityCourse && semester && <section ref={universityCourseDetailRef} className="mt-5 scroll-mt-6 rounded-2xl border border-emerald-200 bg-emerald-50 p-5"><p className="text-xs font-black uppercase tracking-wider text-emerald-800">Course details</p><h3 className="mt-1 text-lg font-black text-slate-950">{selectedUniversityCourse.title}</h3><p className="mt-1 text-sm text-slate-700">{selectedUniversityCourse.code} · {selectedUniversityCourse.credit_hours || "Credit hours not listed"} · {semester.name} · {program?.name}{track && track.name !== "Core" ? ` · ${track.name}` : ""}</p>      {user?.role === "teacher" && <div className="mt-4 flex flex-wrap gap-2"><Button variant="secondary" onClick={() => { setToolSubject(`${program?.name || "LUAWMS"} · ${selectedUniversityCourse.title}`); setToolTopic(selectedUniversityCourse.title); setQuizSource("ai"); nav("quizzes"); }}><Sparkles className="h-4 w-4" />Create quiz for this course</Button><Button variant="secondary" onClick={() => { setNewAssignment((current) => ({ ...current, class_id: selectedTeacherClass?.id ? String(selectedTeacherClass.id) : current.class_id, title: `${selectedUniversityCourse.code} ${selectedUniversityCourse.title}`.trim(), description: `LUAWMS ${program?.name}, ${semester.name}. Course: ${selectedUniversityCourse.title} (${selectedUniversityCourse.code}). Add the assignment instructions and submission requirements for your class.`, curriculum_book_id: null, curriculum_chapter: "", curriculum_topic: "", curriculum_pages: [] })); setIsCreatingAssignment(true); nav("assignments"); }}><ClipboardList className="h-4 w-4" />Create assignment</Button><Button variant="ghost" onClick={() => { setNewClass({ name: selectedUniversityCourse.title, subject: selectedUniversityCourse.title, grade_level: "University - Undergraduate", section: "", course_code: selectedUniversityCourse.code, description: `LUAWMS ${program?.name}, ${semester.name}. ${selectedUniversityCourse.title} (${selectedUniversityCourse.code}), ${selectedUniversityCourse.credit_hours} credit hours.` }); setIsCreatingClass(true); nav("classes"); }}><Plus className="h-4 w-4" />Create classroom for course</Button></div>}<p className="mt-3 text-xs leading-5 text-slate-500">AI-generated explanations and teaching materials are drafts. Verify them against the latest department-approved syllabus.</p></section>}
       {selectedUniversityCourse && semester && user && <CourseMaterialsPanel courseKey={`${selectedUniversityProgram}|${selectedUniversityTrack}|${selectedUniversitySemester}|${selectedUniversityCourse.code || selectedUniversityCourse.title}`} courseTitle={selectedUniversityCourse.title} userId={Number(user.user_id)} />}
     </Page>;
   };
@@ -3914,8 +4078,8 @@ const renderStudentResults = () => {
                   <Download className="h-4 w-4" />Download PDF
                 </a>
                 {user?.role === "teacher" && (
-                  <Button onClick={() => void loadCurriculumChapters(selectedCurriculumBook)} disabled={curriculumOutlineLoading}>
-                    {curriculumOutlineLoading ? <><Loader2 className="h-4 w-4 animate-spin" />Reading contents...</> : <><BookOpen className="h-4 w-4" />{curriculumChapters.length ? "Reload chapters" : "Load chapters & topics"}</>}
+                  <Button onClick={() => void loadCurriculumChapters(selectedCurriculumBook)} disabled={curriculumOutlineLoading || curriculumPageCount === 0}>
+                    {curriculumOutlineLoading ? <><Loader2 className="h-4 w-4 animate-spin" />Reading selected pages...</> : <><BookOpen className="h-4 w-4" />Extract selected pages</>}
                   </Button>
                 )}
                 <button onClick={() => setSelectedCurriculumBook(null)} className="rounded-xl px-3 py-2.5 text-sm font-bold text-slate-500 transition hover:bg-slate-200/70 hover:text-slate-900">Close reader</button>
@@ -3942,12 +4106,47 @@ const renderStudentResults = () => {
               <aside className="flex min-h-[420px] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white">
                 <div className="border-b border-slate-200 bg-slate-50 px-4 py-4">
                   <h3 className="font-black text-slate-900">Chapters & topics</h3>
-                  <p className="mt-1 text-xs text-slate-500">Extracted from the selected textbook</p>
+                  <p className="mt-1 text-xs text-slate-500">Extracted only from the pages you select</p>
                 </div>
                 <div className="min-h-0 flex-1 overflow-y-auto p-3">
-                  {curriculumOutlineLoading && <div className="flex items-center gap-2 py-4 text-sm text-slate-600"><Loader2 className="h-4 w-4 animate-spin" />Reading textbook contents...</div>}
+                  {user?.role === "teacher" && <div className="mb-3 rounded-xl border border-emerald-100 bg-emerald-50/70 p-3">
+                    <label className="block text-xs font-bold text-emerald-950">
+                      Select PDF pages / slides
+                      <input
+                        value={curriculumPageSelection}
+                        onChange={(event) => {
+                          setCurriculumPageSelection(event.target.value);
+                          setCurriculumChapters([]);
+                          setCurriculumOutlineLoaded(false);
+                          setSelectedCurriculumTopic("");
+                        }}
+                        placeholder="e.g. 4-8, 12"
+                        aria-label="Select textbook PDF page numbers or ranges"
+                        className="mt-1 w-full rounded-lg border border-emerald-200 bg-white px-3 py-2 text-sm font-medium text-slate-800"
+                      />
+                    </label>
+                    <div className="mt-2 flex items-center justify-between gap-2 text-[11px] text-slate-600">
+                      <span>{curriculumPageCount ? `${curriculumPageCount} pages in this book` : "Loading page count..."}</span>
+                      <span>{parseSelectedPdfPages(curriculumPageSelection, curriculumPageCount)?.length || 0} selected · max 100</span>
+                    </div>
+                    {curriculumPageCount > 0 && <div className="mt-3">
+                      <div className="mb-2 flex items-center justify-between">
+                        <button type="button" onClick={() => setCurriculumPageBatch((batch) => Math.max(0, batch - 1))} disabled={curriculumPageBatch === 0} className="rounded px-2 py-1 text-xs font-bold text-emerald-800 disabled:opacity-40">Previous</button>
+                        <span className="text-[11px] font-semibold text-slate-500">Pages {curriculumPageBatch * 24 + 1}–{Math.min(curriculumPageCount, (curriculumPageBatch + 1) * 24)}</span>
+                        <button type="button" onClick={() => setCurriculumPageBatch((batch) => batch + 1)} disabled={(curriculumPageBatch + 1) * 24 >= curriculumPageCount} className="rounded px-2 py-1 text-xs font-bold text-emerald-800 disabled:opacity-40">Next</button>
+                      </div>
+                      <div className="grid grid-cols-6 gap-1.5">
+                        {Array.from({ length: Math.min(24, curriculumPageCount - curriculumPageBatch * 24) }, (_, index) => curriculumPageBatch * 24 + index + 1).map((page) => {
+                          const selected = parseSelectedPdfPages(curriculumPageSelection, curriculumPageCount)?.includes(page) || false;
+                          return <button key={page} type="button" aria-pressed={selected} onClick={() => toggleCurriculumPage(page)} className={`rounded-lg border px-1 py-2 text-xs font-bold ${selected ? "border-emerald-700 bg-emerald-700 text-white" : "border-slate-200 bg-white text-slate-700 hover:border-emerald-300"}`}>{page}</button>;
+                        })}
+                      </div>
+                    </div>}
+                    <p className="mt-2 text-[11px] leading-4 text-slate-600">Click page numbers or enter ranges. Use the PDF reader to find the page numbers you want. Only selected pages are sent for extraction and AI tasks.</p>
+                  </div>}
+                  {curriculumOutlineLoading && <div className="py-4 text-sm text-slate-600"><p className="flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" />Extracting selected pages, chapters, and topics...</p><p className="mt-2 text-xs text-slate-500">Only the selected pages are processed. This page selection's outline is cached for reuse.</p></div>}
                   {curriculumOutlineError && <div role="alert" className="border-l-4 border-rose-600 bg-rose-50 px-3 py-2 text-sm text-rose-900">{curriculumOutlineError}</div>}
-                  {!curriculumOutlineLoading && !curriculumOutlineError && !curriculumOutlineLoaded && user?.role === "teacher" && <p className="py-3 text-sm text-slate-500">Load chapters and topics to choose a section from the textbook for AI.</p>}
+                  {!curriculumOutlineLoading && !curriculumOutlineError && !curriculumOutlineLoaded && user?.role === "teacher" && <p className="py-3 text-sm text-slate-500">Select pages, then extract their chapter and topic headings.</p>}
                   {!curriculumOutlineLoading && !curriculumOutlineError && curriculumOutlineLoaded && curriculumChapters.length === 0 && user?.role === "teacher" && <p className="py-3 text-sm text-slate-500">No labeled chapters were found in this PDF.</p>}
                   {curriculumChapters.map((chapter, index) => (
                     <div key={`${chapter.title}-${index}`} className="border-b border-slate-100 py-2 last:border-0">
@@ -3975,7 +4174,7 @@ const renderStudentResults = () => {
                     </label>
                     {curriculumActionError && <p role="alert" className="text-sm text-rose-700">{curriculumActionError}</p>}
                     <div className="grid grid-cols-2 gap-2">
-                      <Button variant="secondary" onClick={() => launchAIChat(`Use the selected textbook as your source${selectedCurriculumTopic ? ` and focus on the topic "${selectedCurriculumTopic}"` : ""}. Help me prepare learning material for ${selectedCurriculumTopic || selectedCurriculumBook.title}.`, "Textbook Assistant")}>
+                      <Button variant="secondary" disabled={user?.role === "teacher" && !parseSelectedPdfPages(curriculumPageSelection, curriculumPageCount)} onClick={() => launchAIChat(`Use only the selected textbook pages and focus on "${selectedCurriculumTopic || selectedCurriculumBook.title}". Help me prepare learning material.`, "Textbook Assistant")}>
                         <MessageSquare className="h-4 w-4" />Ask AI
                       </Button>
                       <Button disabled={curriculumActionLoading || !selectedCurriculumTopic} onClick={() => void generateCurriculumQuiz()}>
@@ -4372,7 +4571,42 @@ const renderStudentResults = () => {
         <span className="mt-auto pr-10"><span className="block text-xs font-black uppercase tracking-[0.16em] text-white/75">Prepare new classwork</span><span className="mt-1 block text-2xl font-black">Create Assignment</span><span className="mt-1 block text-sm text-white/85">Share instructions and due dates with your class</span></span>
         <span className="dashboard-entry-arrow" aria-hidden="true">→</span>
       </button>
-      {isCreatingAssignment && <Modal title="Create Assignment" onClose={() => setIsCreatingAssignment(false)}><div className="space-y-4"><SelectField label="Classroom" value={newAssignment.class_id} onChange={(v: string) => { const classroom = teacherClasses.find((item) => String(item.id) === v); setNewAssignment({ ...newAssignment, class_id: v, total_marks: newAssignment.total_marks === "100" && classroom?.institution_mode === "School" ? "10" : newAssignment.total_marks === "100" && classroom?.institution_mode === "College" ? "20" : newAssignment.total_marks }); }} options={["", ...teacherClasses.map((x) => `${x.id}|${x.name}`)]} optionLabels={["Select classroom", ...teacherClasses.map((x) => `${x.name} · ${x.grade_level || x.institution_mode || "Level not set"}`)]} />{newAssignment.class_id && <p className="-mt-2 rounded-xl bg-emerald-50 p-3 text-xs leading-5 text-emerald-900">{teacherClasses.find((item) => String(item.id) === newAssignment.class_id)?.institution_mode === "School" ? "School tip: use short, clear steps and a few familiar examples. Suggested starting score: 10 marks." : teacherClasses.find((item) => String(item.id) === newAssignment.class_id)?.institution_mode === "College" ? "College tip: combine concept understanding with a practical application. Suggested starting score: 20 marks." : "University tip: set a clear scope and ask for independent application or analysis. Suggested starting score: 100 marks."}</p>}<Field label="Title" value={newAssignment.title} onChange={(v: string) => setNewAssignment({ ...newAssignment, title: v })} placeholder="Assignment title" /><TextAreaField label="Description / Instructions" value={newAssignment.description} onChange={(v: string) => setNewAssignment({ ...newAssignment, description: v })} rows={6} placeholder={teacherClasses.find((item) => String(item.id) === newAssignment.class_id)?.institution_mode === "School" ? "Write simple steps students can follow. Example: read the lesson, answer questions 1–5, and show your work." : teacherClasses.find((item) => String(item.id) === newAssignment.class_id)?.institution_mode === "College" ? "State the concept to explain and the practical task or example students should complete." : "Describe the question, expected evidence, analysis, and submission format."} /><div className="grid md:grid-cols-2 gap-4"><Field label="Due Date" type="datetime-local" value={newAssignment.due_date} onChange={(v: string) => setNewAssignment({ ...newAssignment, due_date: v })} /><Field label="Total Marks" type="number" value={newAssignment.total_marks} onChange={(v: string) => setNewAssignment({ ...newAssignment, total_marks: v })} /></div></div><div className="flex justify-end gap-3 mt-6"><Button variant="ghost" onClick={() => setIsCreatingAssignment(false)}>Cancel</Button><Button onClick={createAssignment} disabled={teacherPortalLoading}>Create Assignment</Button></div></Modal>}
+      {isCreatingAssignment && <Modal title="Create Assignment" onClose={() => setIsCreatingAssignment(false)}><div className="space-y-4">
+        <SelectField
+          label="Classroom"
+          value={newAssignment.class_id}
+          onChange={(value: string) => {
+            const classroom = teacherClasses.find((item) => String(item.id) === value);
+            setNewAssignment({
+              ...newAssignment,
+              class_id: value,
+              total_marks: newAssignment.total_marks === "100" && classroom?.institution_mode === "School"
+                ? "10"
+                : newAssignment.total_marks === "100" && classroom?.institution_mode === "College"
+                  ? "20"
+                  : newAssignment.total_marks,
+            });
+          }}
+          options={["", ...teacherClasses.map((item) => `${item.id}|${item.name}`)]}
+          optionLabels={["Select classroom", ...teacherClasses.map((item) => `${item.name} · ${item.grade_level || item.institution_mode || "Level not set"}`)]}
+        />
+        {newAssignment.curriculum_book_id && <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-950">
+          <p className="font-bold">Required curriculum source</p>
+          <p className="mt-1">{selectedCurriculumBook?.title || `Textbook ${newAssignment.curriculum_book_id}`} · {newAssignment.curriculum_chapter} · {newAssignment.curriculum_topic}</p>
+          <p className="mt-1 text-xs">Selected PDF pages: {newAssignment.curriculum_pages.join(", ")}. Students should answer using only this selected material. AI review will check source alignment; the teacher makes the final grading decision.</p>
+        </div>}
+        {newAssignment.class_id && <p className="-mt-2 rounded-xl bg-emerald-50 p-3 text-xs leading-5 text-emerald-900">{teacherClasses.find((item) => String(item.id) === newAssignment.class_id)?.institution_mode === "School" ? "School tip: use short, clear steps and a few familiar examples. Suggested starting score: 10 marks." : teacherClasses.find((item) => String(item.id) === newAssignment.class_id)?.institution_mode === "College" ? "College tip: combine concept understanding with a practical application. Suggested starting score: 20 marks." : "University tip: set a clear scope and ask for independent application or analysis. Suggested starting score: 100 marks."}</p>}
+        <Field label="Title" value={newAssignment.title} onChange={(value: string) => setNewAssignment({ ...newAssignment, title: value })} placeholder="Assignment title" />
+        <TextAreaField label="Description / Instructions" value={newAssignment.description} onChange={(value: string) => setNewAssignment({ ...newAssignment, description: value })} rows={6} placeholder={teacherClasses.find((item) => String(item.id) === newAssignment.class_id)?.institution_mode === "School" ? "Write simple steps students can follow. Example: read the lesson, answer questions 1–5, and show your work." : teacherClasses.find((item) => String(item.id) === newAssignment.class_id)?.institution_mode === "College" ? "State the concept to explain and the practical task or example students should complete." : "Describe the question, expected evidence, analysis, and submission format."} />
+        <div className="grid gap-4 md:grid-cols-2">
+          <Field label="Due Date" type="datetime-local" value={newAssignment.due_date} onChange={(value: string) => setNewAssignment({ ...newAssignment, due_date: value })} />
+          <Field label="Total Marks" type="number" value={newAssignment.total_marks} onChange={(value: string) => setNewAssignment({ ...newAssignment, total_marks: value })} />
+        </div>
+        <div className="mt-6 flex justify-end gap-3">
+          <Button variant="ghost" onClick={() => setIsCreatingAssignment(false)}>Cancel</Button>
+          <Button onClick={() => void createAssignment()} disabled={teacherPortalLoading}>Create Assignment</Button>
+        </div>
+      </div></Modal>}
       {teacherAssignments.length === 0 ? <Empty title="No assignments yet" text="Create your first assignment." /> : <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-5">{teacherAssignments.map((a) => <div key={a.id} className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm"><div className="w-11 h-11 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center"><ClipboardList className="w-5 h-5" /></div><div className="flex items-center justify-between mt-4"><h2 className="text-xl font-black">{a.title}</h2><Badge>{a.status || "Published"}</Badge></div><p className="text-sm text-slate-500 mt-1">{a.class_name || "Class"}</p><p className="text-sm text-slate-600 mt-4 line-clamp-3">{a.description || "No description provided."}</p><div className="grid grid-cols-2 gap-3 mt-5"><div className="bg-slate-50 rounded-xl p-3"><p className="text-[10px] font-black text-slate-400">MARKS</p><p className="font-black mt-1">{a.total_marks}</p></div><div className="bg-slate-50 rounded-xl p-3"><p className="text-[10px] font-black text-slate-400">SUBMISSIONS</p><p className="font-black mt-1">{a.submission_count || 0}</p></div></div>{a.status === "draft" && <Button className="w-full mt-5" disabled={teacherPortalLoading} onClick={() => void publishAssignment(a)}>Publish to students</Button>}<Button variant="ghost" className="w-full mt-2" onClick={() => loadSubmissions(a)}>Open submissions</Button></div>)}</div>}
     </Page>
   );
@@ -4392,9 +4626,10 @@ const renderTeacherQuizzes = () => (
           <SelectField label="Quiz source" value={(selectedTeacherClass?.institution_mode || user?.institution_mode) === "University" ? "ai" : quizSource} onChange={(value: "ai" | "curriculum") => { setQuizSource(value); setTeacherPortalError(""); setQuizPortalNotice(""); if (value === "curriculum" && curriculumBooks.length === 0) void loadQuizCurriculum(); }} options={(selectedTeacherClass?.institution_mode || user?.institution_mode) === "University" ? ["ai"] : ["curriculum", "ai"]} optionLabels={(selectedTeacherClass?.institution_mode || user?.institution_mode) === "University" ? ["AI topic / own ideas"] : ["Official curriculum textbook", "AI topic / own ideas"]} />
           {quizSource === "curriculum" && (selectedTeacherClass?.institution_mode || user?.institution_mode) !== "University" ? <>
             {curriculumBooks.length === 0 ? <div className="md:col-span-2 rounded-xl border border-dashed border-emerald-200 bg-white p-4 text-sm text-slate-600">{quizCurriculumLoading ? <span className="flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" />Loading official textbooks...</span> : curriculumBooksError ? <span className="text-rose-700">{curriculumBooksError}</span> : "Select the curriculum source above to load its official textbook catalogue."}</div> : <SelectField label="Textbook" value={quizCurriculumBookId} onChange={(value: string) => void selectQuizCurriculumBook(value)} options={["", ...curriculumBooks.filter((book) => book.ebook_available).map((book) => String(book.id))]} optionLabels={["Select a digital textbook", ...curriculumBooks.filter((book) => book.ebook_available).map((book) => `${book.title} · Grade ${book.grade} · ${book.subject}`)]} />}
+            {renderQuizPageSelector()}
             {!!curriculumChapters.length && <SelectField label="Chapter" value={quizCurriculumChapter} onChange={(value: string) => { setQuizCurriculumChapter(value); setQuizCurriculumTopic(""); }} options={["", ...curriculumChapters.map((chapter) => chapter.title)]} optionLabels={["Select a chapter", ...curriculumChapters.map((chapter) => chapter.title)]} />}
             {!!quizCurriculumChapter && <SelectField label="Topic" value={quizCurriculumTopic} onChange={setQuizCurriculumTopic} options={["", ...(curriculumChapters.find((chapter) => chapter.title === quizCurriculumChapter)?.topics.length ? curriculumChapters.find((chapter) => chapter.title === quizCurriculumChapter)!.topics : [quizCurriculumChapter])]} optionLabels={["Select a topic", ...(curriculumChapters.find((chapter) => chapter.title === quizCurriculumChapter)?.topics.length ? curriculumChapters.find((chapter) => chapter.title === quizCurriculumChapter)!.topics : [quizCurriculumChapter])]} />}
-            {(quizCurriculumLoading && quizCurriculumBookId || quizCurriculumError) && <div className="md:col-span-2 text-sm text-rose-700">{quizCurriculumLoading ? "Reading the selected book's chapter list..." : quizCurriculumError}</div>}
+            {(quizCurriculumLoading && quizCurriculumBookId || quizCurriculumError) && <div className="md:col-span-2 text-sm text-rose-700">{quizCurriculumLoading ? "Preparing the selected textbook..." : quizCurriculumError}</div>}
           </> : <>
             {(selectedTeacherClass?.institution_mode || user?.institution_mode) === "University"
               ? <Field label="Subject / course" value={toolSubject} onChange={setToolSubject} placeholder="e.g. Study Skills (GC-101)" />
@@ -4618,6 +4853,8 @@ const renderTeacherQuizzes = () => (
             </div>
 
             <div className="space-y-4 border-t border-slate-100 pt-4">
+              {selectedTeacherQuiz?.curriculum_book_id && <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-950"><p className="font-black">Required source: {selectedTeacherQuiz.curriculum_book_title}</p><p className="mt-1">Grade {selectedTeacherQuiz.curriculum_book_grade} · Chapter {selectedTeacherQuiz.curriculum_chapter} · Topic {selectedTeacherQuiz.curriculum_topic}</p></div>}
+              {quizAIOutput?.curriculum_alignment && <div className="rounded-xl border border-violet-200 bg-violet-50 p-3 text-sm"><p className="font-black text-violet-950">AI source check: {quizAIOutput.curriculum_alignment.status.replaceAll("_", " ")}</p><p className="mt-1 text-xs text-slate-600">Basis: {quizAIOutput.curriculum_alignment.basis}</p>{Array.isArray(quizAIOutput.curriculum_alignment.unsupported_question_numbers) && quizAIOutput.curriculum_alignment.unsupported_question_numbers.length > 0 && <p className="mt-2 font-semibold text-amber-900">Teacher review needed for question(s): {quizAIOutput.curriculum_alignment.unsupported_question_numbers.join(", ")}</p>}{Array.isArray(quizAIOutput.curriculum_alignment.evidence) && <ul className="mt-2 list-disc pl-5 text-slate-700">{quizAIOutput.curriculum_alignment.evidence.map((item: string, index: number) => <li key={index}>{item}</li>)}</ul>}<p className="mt-2 text-xs text-slate-600">AI result is a suggestion. Review the source check and score before publishing.</p></div>}
               <div className="flex items-center justify-between">
                 <label className="text-xs font-black uppercase tracking-wider text-slate-500">Obtained Marks (Max: {selectedTeacherQuiz?.total_marks || 10})</label>
                 <Button variant="ghost" onClick={handleAIQuizCheck} disabled={teacherPortalLoading}>
@@ -4872,6 +5109,7 @@ const handleAIQuizCheck = async () => {
       <Page>
         <button onClick={() => nav("assignments")} className="inline-flex items-center gap-2 text-sm font-bold text-slate-500 hover:text-blue-600 mb-5"><ArrowLeft className="w-4 h-4" />Back to Assignments</button>
         <Header title={selectedAssignment?.title || "Assignment Submissions"} subtitle="Review student work, view submission IDs, grade submissions, and use AI to evaluate student work." />
+        {selectedAssignment?.curriculum_book_id && <div className="mb-5 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-950"><p className="font-black">Required source for marking: {selectedAssignment.curriculum_book_title}</p><p className="mt-1">Grade {selectedAssignment.curriculum_book_grade} · Chapter {selectedAssignment.curriculum_chapter} · Topic {selectedAssignment.curriculum_topic}</p><p className="mt-1 text-xs font-semibold">Teacher-selected PDF pages: {formatCurriculumPages(selectedAssignment.curriculum_pages)}</p><p className="mt-2">AI compares each submission with only these selected pages and returns a suggested score. Review the source evidence and suggested marks before publishing.</p></div>}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
           <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm"><div className="flex items-center justify-between"><div><p className="text-xs font-black uppercase tracking-wider text-slate-400">Total Submissions</p><p className="text-3xl font-black text-slate-900 mt-2">{totalSubmissions}</p></div><div className="w-11 h-11 rounded-xl bg-blue-50 text-blue-700 flex items-center justify-center"><ClipboardList className="w-5 h-5" /></div></div></div>
           <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm"><div className="flex items-center justify-between"><div><p className="text-xs font-black uppercase tracking-wider text-slate-400">Pending Review</p><p className="text-3xl font-black text-amber-600 mt-2">{pendingSubmissions}</p></div><div className="w-11 h-11 rounded-xl bg-amber-50 text-amber-700 flex items-center justify-center"><Clock className="w-5 h-5" /></div></div></div>
@@ -4918,12 +5156,12 @@ const handleAIQuizCheck = async () => {
                   </div>
 
                   {evaluation && <section className="mt-4 rounded-2xl border border-violet-200 bg-violet-50/60 p-5">
-                    <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-black uppercase tracking-wider text-violet-700">AI teacher review {aiResult.document_name ? `· ${aiResult.document_name}` : ""}</p><p className="mt-1 text-sm text-violet-900">Suggested grade: <strong>{evaluation.suggested_score}/{aiResult.total_marks}</strong> · {evaluation.percentage}% · {evaluation.grade}</p></div><span className="rounded-full bg-white px-3 py-1 text-xs font-bold text-slate-600">AI writing estimate is uncertain</span></div>
-                    {evaluation.rubric && <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">{[["Relevance", evaluation.rubric.relevance], ["Accuracy", evaluation.rubric.accuracy], ["Completeness", evaluation.rubric.completeness_reasoning], ["Clarity", evaluation.rubric.clarity]].map(([label, value]: any) => <div key={label} className="rounded-xl border border-violet-100 bg-white p-3"><p className="text-[10px] font-black uppercase text-slate-400">{label}</p><p className="mt-1 font-black text-slate-800">{value}</p></div>)}</div>}
+                    <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-black uppercase tracking-wider text-violet-700">AI teacher review {aiResult.document_name ? `· ${aiResult.document_name}` : ""}</p><p className="mt-1 text-sm text-violet-900">Suggested grade: <strong>{evaluation.suggested_score}/{aiResult.total_marks}</strong> · {evaluation.percentage}% · {evaluation.grade}</p></div><span className="rounded-full bg-white px-3 py-1 text-xs font-bold text-slate-600">Draft · teacher review required</span></div>
+                    {evaluation.source_alignment && <div className="mt-3 rounded-xl border border-violet-100 bg-white p-3 text-sm"><p className="font-black text-violet-900">Source alignment: {evaluation.source_alignment.status.replaceAll("_", " ")}</p><p className="mt-1 text-xs text-slate-500">Basis: {evaluation.source_alignment.basis}</p>{Array.isArray(evaluation.source_alignment.evidence) && evaluation.source_alignment.evidence.length > 0 && <ul className="mt-2 list-disc space-y-1 pl-5 text-slate-700">{evaluation.source_alignment.evidence.map((item: string, index: number) => <li key={index}>{item}</li>)}</ul>}{Array.isArray(evaluation.source_alignment.unsupported_claims) && evaluation.source_alignment.unsupported_claims.length > 0 && <div className="mt-2 text-amber-900"><p className="font-bold">Not supported by the selected source</p><ul className="mt-1 list-disc pl-5">{evaluation.source_alignment.unsupported_claims.map((item: string, index: number) => <li key={index}>{item}</li>)}</ul></div>}</div>}
+                    {evaluation.rubric && <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">{[["Curriculum / task fit", evaluation.rubric.source_or_task_alignment], ["Accuracy", evaluation.rubric.accuracy], ["Completeness", evaluation.rubric.completeness_reasoning], ["Clarity", evaluation.rubric.clarity]].map(([label, value]: any) => <div key={label} className="rounded-xl border border-violet-100 bg-white p-3"><p className="text-[10px] font-black uppercase text-slate-400">{label}</p><p className="mt-1 font-black text-slate-800">{value}</p></div>)}</div>}
                     <p className="mt-4 whitespace-pre-wrap text-sm leading-6 text-slate-800">{evaluation.detailed_feedback || evaluation.overall_summary}</p>
                     {Array.isArray(evaluation.strengths) && <div className="mt-3"><p className="text-xs font-black uppercase text-emerald-700">Strengths</p><ul className="mt-1 list-disc pl-5 text-sm text-slate-700">{evaluation.strengths.map((item: string, index: number) => <li key={index}>{item}</li>)}</ul></div>}
                     {Array.isArray(evaluation.areas_for_improvement) && <div className="mt-3"><p className="text-xs font-black uppercase text-amber-700">Next steps</p><ul className="mt-1 list-disc pl-5 text-sm text-slate-700">{evaluation.areas_for_improvement.map((item: string, index: number) => <li key={index}>{item}</li>)}</ul></div>}
-                    {evaluation.ai_detection_verdict && <p className="mt-3 text-xs text-slate-500">Writing-style observation: {evaluation.ai_detection_verdict}{evaluation.ai_generated_probability !== undefined ? ` (${evaluation.ai_generated_probability}% low-confidence estimate)` : ""} — {evaluation.ai_detection_reasoning}. This is not proof and was not used to deduct marks.</p>}
                     <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-violet-200 pt-4"><p className="text-xs text-slate-500">Review the AI suggestion before publishing the result.</p><Button onClick={() => void publishSubmissionAIEvaluation(s)} disabled={teacherPortalLoading || aiResult.published}>{aiResult.published ? <CheckCircle2 className="w-4 h-4" /> : <Send className="w-4 h-4" />}{aiResult.published ? "Published to student" : "Publish grade to student"}</Button></div>
                   </section>}
 
@@ -4973,7 +5211,8 @@ const handleAIQuizCheck = async () => {
             {curriculumBooks.length === 0 && <Button type="button" variant="secondary" onClick={() => void loadQuizCurriculum()} disabled={quizCurriculumLoading}>{quizCurriculumLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <BookCopy className="h-4 w-4" />}Load official book catalogue</Button>}
             {curriculumBooksError && <AlertBox tone="error">{curriculumBooksError}</AlertBox>}
             {curriculumBooks.length > 0 && <SelectField label="Textbook" value={quizCurriculumBookId} onChange={(value: string) => void selectQuizCurriculumBook(value)} options={["", ...curriculumBooks.filter((book) => book.ebook_available).map((book) => String(book.id))]} optionLabels={["Select a digital textbook", ...curriculumBooks.filter((book) => book.ebook_available).map((book) => `${book.title} · Grade ${book.grade} · ${book.subject}`)]} />}
-            {quizCurriculumLoading && quizCurriculumBookId && <p className="flex items-center gap-2 text-xs font-semibold text-slate-500"><Loader2 className="h-4 w-4 animate-spin" />Reading chapters from the selected book...</p>}
+            {renderQuizPageSelector()}
+            {quizCurriculumLoading && quizCurriculumBookId && <p className="flex items-center gap-2 text-xs font-semibold text-slate-500"><Loader2 className="h-4 w-4 animate-spin" />Preparing or extracting selected textbook pages...</p>}
             {!!curriculumChapters.length && <>
               <SelectField label="Chapter" value={quizCurriculumChapter} onChange={(value: string) => { setQuizCurriculumChapter(value); setQuizCurriculumTopic(""); }} options={["", ...curriculumChapters.map((chapter) => chapter.title)]} optionLabels={["Select a chapter", ...curriculumChapters.map((chapter) => chapter.title)]} />
               {!!quizCurriculumChapter && <SelectField label="Topic" value={quizCurriculumTopic} onChange={setQuizCurriculumTopic} options={["", ...(curriculumChapters.find((chapter) => chapter.title === quizCurriculumChapter)?.topics.length ? curriculumChapters.find((chapter) => chapter.title === quizCurriculumChapter)!.topics : [quizCurriculumChapter])]} optionLabels={["Select a topic", ...(curriculumChapters.find((chapter) => chapter.title === quizCurriculumChapter)?.topics.length ? curriculumChapters.find((chapter) => chapter.title === quizCurriculumChapter)!.topics : [quizCurriculumChapter])]} />}
