@@ -3,6 +3,8 @@ import { createPortal } from "react-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { API_BASE, API_CONFIG_ERROR } from "./apiConfig";
+import MobilePdfReader from "./MobilePdfReader";
+import { isInlinePdfUnsupported } from "./pdfSupport";
 import {
   Activity,
   AlertCircle,
@@ -4088,7 +4090,15 @@ const renderStudentResults = () => {
             <div className="grid gap-4 xl:grid-cols-[minmax(0,1.8fr)_minmax(280px,0.8fr)]">
               <div className="relative min-h-[620px] overflow-hidden rounded-2xl bg-slate-800 xl:min-h-[760px]">
                 {curriculumPdfLoading && <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-slate-900 text-white"><Loader2 className="h-7 w-7 animate-spin text-emerald-300" /><p className="text-sm font-semibold">Preparing the textbook for in-page reading…</p><p className="text-xs text-slate-400">The first open can take a few seconds.</p></div>}
-                {!curriculumPdfError && (
+                {!curriculumPdfError && !curriculumPdfLoading && isInlinePdfUnsupported() && (
+                  <MobilePdfReader
+                    key={selectedCurriculumBook.id}
+                    url={`${API_BASE}/api/curriculum/books/${selectedCurriculumBook.id}/pdf`}
+                    selectedPages={parseSelectedPdfPages(curriculumPageSelection, curriculumPageCount) || []}
+                    onTogglePage={user?.role === "teacher" ? toggleCurriculumPage : undefined}
+                  />
+                )}
+                {!curriculumPdfError && !isInlinePdfUnsupported() && (
                   <iframe
                     key={selectedCurriculumBook.id}
                     title={`${selectedCurriculumBook.title} PDF`}
