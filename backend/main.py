@@ -25,6 +25,7 @@ load_dotenv()
 from security import create_access_token, get_password_hash, verify_password, SECRET_KEY, ALGORITHM
 from Database import DATABASE_URL, get_connection, get_columns
 from storage import save_upload, signed_private_blob_url
+from billing import build_billing, init_billing_tables
 
 app = FastAPI(title='Khanmigo Professional AI Assistant')
 
@@ -245,6 +246,7 @@ def init_db():
     for student in existing_students:
         c.execute('UPDATE users SET roll_number=? WHERE id=?', (f"STU-{int(student['id']):05d}", student['id']))
     c.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_roll_number ON users(roll_number) WHERE roll_number IS NOT NULL')
+    init_billing_tables(c, addcol)
     c.execute('''CREATE TABLE IF NOT EXISTS password_reset_tokens(
         token_hash TEXT PRIMARY KEY,
         user_id INTEGER NOT NULL,
@@ -625,6 +627,10 @@ def token_account(authorization):
 
 def profile_picture_url(value):
     return value
+
+
+billing_router, verify_premium_access = build_billing(db, authenticated_user, VALID_ROLES)
+app.include_router(billing_router)
 
 
 class BTBBReaderParser(HTMLParser):
@@ -4421,6 +4427,7 @@ def delete_lesson_plan(lesson_id: int, teacher_id: int):
 @app.post('/api/teacher/quizzes/generate')
 def generate_teacher_quiz(x: TeacherQuizGenerateRequest):
     teacher_only(x.teacher_id)
+    verify_premium_access(x.teacher_id, 'ai_quiz_generator')
     count = max(1, min(x.question_count, 50))
     level = get_class_learning_level(x.class_id, x.teacher_id)
     level_guidance = learning_level_guidance(level['institution_mode'], level['grade_level'] or x.grade_level)
