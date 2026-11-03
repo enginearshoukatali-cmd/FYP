@@ -1774,7 +1774,7 @@ def curriculum_book_chapters(book_id: int, req: dict):
     lock = btbb_chapters_lock(book_id)
     with lock:
         chapters = cached_btbb_chapters(book_id, fingerprint, pages)
-        if chapters is not None:
+        if chapters:
             return {'book': book, 'chapters': chapters, 'pages': pages, 'cached': True}
 
         gemini_file = None
@@ -1808,7 +1808,35 @@ def curriculum_book_chapters(book_id: int, req: dict):
             )
             data = parse_ai_json(result.text or '', 'AI could not extract the textbook chapters.')
             chapters = normalize_btbb_chapters(data.get('chapters') if isinstance(data, dict) else None)
-            save_btbb_chapters(book_id, fingerprint, pages, chapters)
+            if not chapters:
+                # Body-text pages often carry no chapter heading; fall back to their own section/topic headings.
+                fallback_prompt = (
+                    f'Read only the teacher-selected pages {", ".join(map(str, pages))} from textbook '
+                    f'{book["title"]}, Grade {book["grade"]}, {book["subject"]}. These pages have no chapter heading, '
+                    'so list the section headings, sub-headings, defined terms, and worked-example titles that are '
+                    'visible on them. Return only valid JSON in this shape: '
+                    '{"chapters":[{"title":"short title for these pages, taken from a visible heading or running header",'
+                    '"topics":["Topic"]}]}. Use only text visible on the selected pages. '
+                    'If the pages truly contain no readable text, return an empty chapters array.'
+                )
+                fallback = client.models.generate_content(
+                    model=GEMINI_MODEL,
+                    contents=[fallback_prompt, gemini_file or source],
+                    config={
+                        'system_instruction': education_system_instruction(
+                            'teacher',
+                            teacher['institution_mode'],
+                            book['grade'],
+                            'textbook chapter extraction',
+                        )
+                    },
+                )
+                fallback_data = parse_ai_json(fallback.text or '', 'AI could not extract the textbook chapters.')
+                chapters = normalize_btbb_chapters(
+                    fallback_data.get('chapters') if isinstance(fallback_data, dict) else None
+                )
+            if chapters:
+                save_btbb_chapters(book_id, fingerprint, pages, chapters)
             return {'book': book, 'chapters': chapters, 'pages': pages, 'cached': False}
         finally:
             if temp_path and os.path.exists(temp_path):
