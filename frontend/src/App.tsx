@@ -3,7 +3,6 @@ import { createPortal } from "react-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { API_BASE, API_CONFIG_ERROR } from "./apiConfig";
-import MobilePdfReader from "./MobilePdfReader";
 import { isInlinePdfUnsupported } from "./pdfSupport";
 import {
   Activity,
@@ -61,6 +60,7 @@ import {
 } from "lucide-react";
 
 const MAX_FILES = 5;
+const MobilePdfReader = React.lazy(() => import("./MobilePdfReader"));
 const MAX_FILE_SIZE = 20 * 1024 * 1024;
 const DASHBOARD_IMAGES = {
   teacher: "https://images.unsplash.com/photo-1509062522246-3755977927d7?auto=format&fit=crop&w=1400&q=80",
@@ -4091,12 +4091,14 @@ const renderStudentResults = () => {
               <div className="relative min-h-[620px] overflow-hidden rounded-2xl bg-slate-800 xl:min-h-[760px]">
                 {curriculumPdfLoading && <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-slate-900 text-white"><Loader2 className="h-7 w-7 animate-spin text-emerald-300" /><p className="text-sm font-semibold">Preparing the textbook for in-page reading…</p><p className="text-xs text-slate-400">The first open can take a few seconds.</p></div>}
                 {!curriculumPdfError && !curriculumPdfLoading && isInlinePdfUnsupported() && (
-                  <MobilePdfReader
-                    key={selectedCurriculumBook.id}
-                    url={`${API_BASE}/api/curriculum/books/${selectedCurriculumBook.id}/pdf`}
-                    selectedPages={parseSelectedPdfPages(curriculumPageSelection, curriculumPageCount) || []}
-                    onTogglePage={user?.role === "teacher" ? toggleCurriculumPage : undefined}
-                  />
+                  <React.Suspense fallback={<p className="p-4 text-sm text-white">Loading reader…</p>}>
+                    <MobilePdfReader
+                      key={selectedCurriculumBook.id}
+                      url={`${API_BASE}/api/curriculum/books/${selectedCurriculumBook.id}/pdf`}
+                      selectedPages={parseSelectedPdfPages(curriculumPageSelection, curriculumPageCount) || []}
+                      onTogglePage={user?.role === "teacher" ? toggleCurriculumPage : undefined}
+                    />
+                  </React.Suspense>
                 )}
                 {!curriculumPdfError && !isInlinePdfUnsupported() && (
                   <iframe
