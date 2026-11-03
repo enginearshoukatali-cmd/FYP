@@ -26,6 +26,7 @@ from security import create_access_token, get_password_hash, verify_password, SE
 from Database import DATABASE_URL, get_connection, get_columns
 from storage import save_upload, signed_private_blob_url
 from billing import build_billing, init_billing_tables
+from whatsapp import build_whatsapp, init_whatsapp_tables
 
 app = FastAPI(title='Khanmigo Professional AI Assistant')
 
@@ -247,6 +248,7 @@ def init_db():
         c.execute('UPDATE users SET roll_number=? WHERE id=?', (f"STU-{int(student['id']):05d}", student['id']))
     c.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_roll_number ON users(roll_number) WHERE roll_number IS NOT NULL')
     init_billing_tables(c, addcol)
+    init_whatsapp_tables(c, addcol)
     c.execute('''CREATE TABLE IF NOT EXISTS password_reset_tokens(
         token_hash TEXT PRIMARY KEY,
         user_id INTEGER NOT NULL,
@@ -631,6 +633,7 @@ def profile_picture_url(value):
 
 billing_router, verify_premium_access = build_billing(db, authenticated_user, VALID_ROLES)
 app.include_router(billing_router)
+app.include_router(build_whatsapp(db, authenticated_user, teacher_class, verify_premium_access, VALID_ROLES))
 
 
 class BTBBReaderParser(HTMLParser):
