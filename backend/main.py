@@ -809,7 +809,10 @@ BTBB_TEXT_CACHE_DIR = os.path.join(BTBB_PDF_CACHE_DIR, 'extracted_text')
 BTBB_TEXT_CACHE_VERSION = 1
 BTBB_MAX_EXTRACTED_PAGES = 3000
 BTBB_MAX_EXTRACTED_CHARS = 12_000_000
-BTBB_MAX_SOURCE_CONTEXT_CHARS = 80_000
+BTBB_MAX_SOURCE_CONTEXT_CHARS = 1_000_000
+# Gemini reads at most 1000 pages from one PDF, so that is the hard ceiling for a selection.
+BTBB_MAX_SELECTED_PAGES = 1000
+BTBB_OUTLINE_BATCH_PAGES = 50
 BTBB_CHAPTERS_LOCKS = {}
 BTBB_CHAPTERS_LOCKS_GUARD = threading.Lock()
 BTBB_PDF_URL_CACHE = {}
@@ -1191,8 +1194,8 @@ def selected_pdf_pages(pdf_path, requested_pages):
     ):
         raise HTTPException(422, f'Selected pages must be unique page numbers between 1 and {page_count}.')
     pages = sorted(requested_pages)
-    if len(pages) > 100:
-        raise HTTPException(422, 'Select no more than 100 pages at a time.')
+    if len(pages) > BTBB_MAX_SELECTED_PAGES:
+        raise HTTPException(422, f'Select no more than {BTBB_MAX_SELECTED_PAGES} pages at a time.')
     return reader, pages
 
 
@@ -1762,8 +1765,44 @@ def student_safe_quiz_questions(raw_questions):
     ]
 
 
+def merge_btbb_chapters(chapter_groups):
+    merged = {}
+    for chapters in chapter_groups:
+        for chapter in chapters:
+            key = chapter['title'].strip().lower()
+            entry = merged.setdefault(key, {'title': chapter['title'], 'topics': []})
+            for topic in chapter['topics']:
+                if topic not in entry['topics']:
+                    entry['topics'].append(topic)
+    return list(merged.values())
+
+
 @app.post('/api/curriculum/books/{book_id}/chapters')
 def curriculum_book_chapters(book_id: int, req: dict):
+    teacher_only(req.get('teacher_id'))
+    book = next((item for item in get_btbb_books() if item['id'] == book_id), None)
+    if not book:
+        raise HTTPException(404, 'This title is not in the BTBB approved book catalogue.')
+    pdf_path = cached_btbb_pdf_path(book)
+    fingerprint = btbb_pdf_fingerprint(pdf_path)
+    _, pages = selected_pdf_pages(pdf_path, req.get('pages'))
+    if len(pages) <= BTBB_OUTLINE_BATCH_PAGES:
+        return curriculum_outline_for_pages(book_id, req)
+    cached = cached_btbb_chapters(book_id, fingerprint, pages)
+    if cached:
+        return {'book': book, 'chapters': cached, 'pages': pages, 'cached': True}
+    # Large selections are read in batches so each AI request stays small enough to finish.
+    groups = []
+    for start in range(0, len(pages), BTBB_OUTLINE_BATCH_PAGES):
+        batch = pages[start:start + BTBB_OUTLINE_BATCH_PAGES]
+        groups.append(curriculum_outline_for_pages(book_id, {**req, 'pages': batch})['chapters'])
+    chapters = merge_btbb_chapters(groups)
+    if chapters:
+        save_btbb_chapters(book_id, fingerprint, pages, chapters)
+    return {'book': book, 'chapters': chapters, 'pages': pages, 'cached': False}
+
+
+def curriculum_outline_for_pages(book_id: int, req: dict):
     teacher = teacher_only(req.get('teacher_id'))
     book = next((item for item in get_btbb_books() if item['id'] == book_id), None)
     if not book:

@@ -265,6 +265,8 @@ interface CurriculumChapter {
   topics: string[];
 }
 
+const MAX_CURRICULUM_PAGES = 1000;
+
 function parseSelectedPdfPages(selection: string, pageCount: number): number[] | null {
   const pages = new Set<number>();
   for (const part of selection.split(",")) {
@@ -274,10 +276,10 @@ function parseSelectedPdfPages(selection: string, pageCount: number): number[] |
     if (!match) return null;
     const start = Number(match[1]);
     const end = Number(match[2] || match[1]);
-    if (start < 1 || end < start || end > pageCount || end - start > 99) return null;
+    if (start < 1 || end < start || end > pageCount || end - start >= MAX_CURRICULUM_PAGES) return null;
     for (let page = start; page <= end; page += 1) pages.add(page);
   }
-  return pages.size > 0 && pages.size <= 100 ? [...pages].sort((a, b) => a - b) : null;
+  return pages.size > 0 && pages.size <= MAX_CURRICULUM_PAGES ? [...pages].sort((a, b) => a - b) : null;
 }
 
 function formatCurriculumPages(pages: Assignment["curriculum_pages"]): string {
@@ -1632,7 +1634,7 @@ export default function App() {
     const current = parseSelectedPdfPages(curriculumPageSelection, curriculumPageCount) || [];
     const next = current.includes(page)
       ? current.filter((selected) => selected !== page)
-      : current.length < 100 ? [...current, page] : current;
+      : current.length < MAX_CURRICULUM_PAGES ? [...current, page] : current;
     setCurriculumPageSelection(next.sort((a, b) => a - b).join(", "));
     setCurriculumChapters([]);
     setCurriculumOutlineLoaded(false);
@@ -4139,7 +4141,7 @@ const renderStudentResults = () => {
                     </label>
                     <div className="mt-2 flex items-center justify-between gap-2 text-[11px] text-slate-600">
                       <span>{curriculumPageCount ? `${curriculumPageCount} pages in this book` : "Loading page count..."}</span>
-                      <span>{parseSelectedPdfPages(curriculumPageSelection, curriculumPageCount)?.length || 0} selected · max 100</span>
+                      <span>{parseSelectedPdfPages(curriculumPageSelection, curriculumPageCount)?.length || 0} selected · max {MAX_CURRICULUM_PAGES}</span>
                     </div>
                     {curriculumPageCount > 0 && <div className="mt-3">
                       <div className="mb-2 flex items-center justify-between">
