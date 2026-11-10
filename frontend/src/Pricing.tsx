@@ -118,7 +118,7 @@ export default function Pricing({ userId, token }: { userId: number; token: stri
           <p className="font-black">Upgrade to Premium</p>
           <p className="text-sm text-emerald-50">
             {status.expired_plan ? `Your ${status.expired_plan} plan has expired. ` : "You are on the free Basic plan. "}
-            Unlock the AI quiz generator, WhatsApp tools and more.
+            Unlock the AI quiz generator and more.
           </p>
         </div>
       )}

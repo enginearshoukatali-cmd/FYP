@@ -62,7 +62,6 @@ import {
 const MAX_FILES = 5;
 const MobilePdfReader = React.lazy(() => import("./MobilePdfReader"));
 const Pricing = React.lazy(() => import("./Pricing"));
-const WhatsAppCenter = React.lazy(() => import("./WhatsAppCenter"));
 const MAX_FILE_SIZE = 20 * 1024 * 1024;
 const DASHBOARD_IMAGES = {
   teacher: "https://images.unsplash.com/photo-1509062522246-3755977927d7?auto=format&fit=crop&w=1400&q=80",
@@ -238,7 +237,6 @@ type Tab =
   | "communications"
   | "meetings"
   | "pricing"
-  | "whatsapp"
   | "chat";
 
 
@@ -4347,7 +4345,6 @@ const renderStudentResults = () => {
             <NavButton id="meetings" label="Online Classes" icon={Video} />
             <NavButton id="chat" label="AI Assistant" icon={MessageSquare} />
                 <NavButton id="quizzes" label="Quizzes" icon={CheckSquare} />
-            <NavButton id="whatsapp" label="WhatsApp Parents" icon={MessageSquare} />
             <NavButton id="pricing" label="Pricing & Plans" icon={Sparkles} />
           </div>}
           {user.role === "student" && <div className="space-y-1">
@@ -4375,7 +4372,6 @@ const renderStudentResults = () => {
             <NavButton id="attendance" label="Attendance" icon={Clock} />
             <NavButton id="communications" label="Messages & Meetings" icon={MessageSquare} />
             <NavButton id="meetings" label="Meetings" icon={Video} />
-            <NavButton id="whatsapp" label="WhatsApp Parents" icon={MessageSquare} />
             <NavButton id="pricing" label="Pricing & Plans" icon={Sparkles} />
             <NavButton id="chat" label="AI Assistant" icon={Sparkles} />
           </div>}
@@ -6051,7 +6047,6 @@ const handleAIQuizCheck = async () => {
   else if (activeTab === "communications") content = renderCommunications();
   else if (activeTab === "chat") content = renderChat();
   else if (activeTab === "profile") content = renderProfile();
-  else if (activeTab === "whatsapp" && user.role !== "student") content = <React.Suspense fallback={<div className="p-8 text-sm text-slate-500">Loading...</div>}><WhatsAppCenter userId={Number(user.user_id)} token={user.access_token || ""} role={user.role as "teacher" | "staff"} /></React.Suspense>;
   else if (activeTab === "pricing" && user.role !== "student") content = <React.Suspense fallback={<div className="p-8 text-sm text-slate-500">Loading...</div>}><Pricing userId={Number(user.user_id)} token={user.access_token || ""} /></React.Suspense>;
   else if (user.role === "teacher") {
 

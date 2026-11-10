@@ -8,15 +8,12 @@ from pydantic import BaseModel, Field
 
 PLANS = {
     'basic': {'name': 'Basic', 'price_pkr': 0, 'features': ['Classes, quizzes and assignments', 'AI study assistant', 'Curriculum reader']},
-    'advanced': {'name': 'Advanced', 'price_pkr': 1500, 'features': ['Everything in Basic', 'AI quiz and paper generator', 'Bulk WhatsApp broadcasts', 'Priority support']},
-    'enterprise': {'name': 'Enterprise', 'price_pkr': 5000, 'features': ['Everything in Advanced', 'Automated reminders and scheduling', 'Voice notes and emergency alerts', 'Dedicated onboarding']},
+    'advanced': {'name': 'Advanced', 'price_pkr': 1500, 'features': ['Everything in Basic', 'AI quiz and paper generator', 'Priority support']},
+    'enterprise': {'name': 'Enterprise', 'price_pkr': 5000, 'features': ['Everything in Advanced', 'Dedicated onboarding']},
 }
 PLAN_RANK = {'basic': 0, 'advanced': 1, 'enterprise': 2}
 FEATURE_MIN_PLAN = {
     'ai_quiz_generator': 'advanced',
-    'whatsapp_bulk': 'advanced',
-    'whatsapp_automation': 'enterprise',
-    'voice_notes': 'enterprise',
 }
 TRX_PATTERN = re.compile(r'^[A-Za-z0-9\-]{6,40}$')
 
