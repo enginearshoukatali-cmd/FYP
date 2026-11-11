@@ -4,6 +4,10 @@ An education workspace for students, teachers, and education teams. It includes
 classrooms, assignments, quizzes, curriculum browsing, BTBB textbook reading,
 and book-grounded AI tools.
 
+The application no longer provides paid plans or payment verification. Existing
+billing records and subscription columns in deployed databases are left intact;
+they are not used to restrict access to features.
+
 ## Project structure
 
 - `frontend/` — React, TypeScript, and Vite web application.
