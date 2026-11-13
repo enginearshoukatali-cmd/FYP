@@ -52,12 +52,24 @@ configured_origins = (
 allowed_origins = list(dict.fromkeys([
     'http://localhost:5173',
     'http://127.0.0.1:5173',
+    'https://frontend-production-b6245.up.railway.app',
     *(
         origin.strip().rstrip('/')
         for origin in configured_origins.split(',')
         if origin.strip()
     ),
 ]))
+@app.middleware('http')
+async def json_errors(request, call_next):
+    # Registered before CORS so it sits inside it: unhandled errors become JSON
+    # responses that still get CORS headers instead of a browser "Failed to fetch".
+    try:
+        return await call_next(request)
+    except Exception as exc:
+        print(f'Unhandled error on {request.method} {request.url.path}: {exc!r}')
+        return JSONResponse(status_code=500, content={'detail': f'Internal server error: {exc}'})
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
@@ -4618,9 +4630,9 @@ def ai_check_quiz(x: QuizAICheckRequest):
             )
             curriculum_file, curriculum_temp_path = upload_curriculum_pdf(
                 source_book,
-                submission['curriculum_chapter'],
-                submission['curriculum_topic'],
-                json.loads(submission['curriculum_pages'] or 'null'),
+                att['curriculum_chapter'],
+                att['curriculum_topic'],
+                json.loads(att['curriculum_pages'] or 'null'),
             )
             source_context = (
                 f"Verify the quiz questions and answer key against BTBB textbook {source_book['title']}, "
@@ -4711,7 +4723,7 @@ def ai_check_quiz(x: QuizAICheckRequest):
     finally:
         if curriculum_temp_path and os.path.exists(curriculum_temp_path):
             os.remove(curriculum_temp_path)
-        delete_uploaded_curriculum_source(curriculum_file, submission['curriculum_book_id'])
+        delete_uploaded_curriculum_source(curriculum_file, att['curriculum_book_id'])
 
 
 
@@ -5091,7 +5103,7 @@ Do not wrap JSON in markdown fences.
                 client.files.delete(name=gemini_file.name)
             except Exception:
                 pass
-        delete_uploaded_curriculum_source(curriculum_file, submission['curriculum_book_id'])
+        delete_uploaded_curriculum_source(curriculum_file, att['curriculum_book_id'])
 
     return {
         'success': True,
