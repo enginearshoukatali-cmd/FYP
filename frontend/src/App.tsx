@@ -4934,7 +4934,7 @@ const handleGradeQuizAttempt = async () => {
         body: JSON.stringify(payload)
       });
 
-      const data = await response.json();
+      const data = await response.json().catch(() => ({ detail: `Server returned status ${response.status}` }));
 
       if (!response.ok) {
          // Safely extract the real error instead of [object Object]
