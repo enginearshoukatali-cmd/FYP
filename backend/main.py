@@ -25,7 +25,6 @@ load_dotenv()
 from security import create_access_token, get_password_hash, verify_password, SECRET_KEY, ALGORITHM
 from Database import DATABASE_URL, get_connection, get_columns
 from storage import save_upload, signed_private_blob_url
-from billing import build_billing, init_billing_tables
 
 app = FastAPI(title='Khanmigo Professional AI Assistant')
 
@@ -53,12 +52,24 @@ configured_origins = (
 allowed_origins = list(dict.fromkeys([
     'http://localhost:5173',
     'http://127.0.0.1:5173',
+    'https://frontend-production-b6245.up.railway.app',
     *(
         origin.strip().rstrip('/')
         for origin in configured_origins.split(',')
         if origin.strip()
     ),
 ]))
+@app.middleware('http')
+async def json_errors(request, call_next):
+    # Registered before CORS so it sits inside it: unhandled errors become JSON
+    # responses that still get CORS headers instead of a browser "Failed to fetch".
+    try:
+        return await call_next(request)
+    except Exception as exc:
+        print(f'Unhandled error on {request.method} {request.url.path}: {exc!r}')
+        return JSONResponse(status_code=500, content={'detail': f'Internal server error: {exc}'})
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
@@ -246,7 +257,6 @@ def init_db():
     for student in existing_students:
         c.execute('UPDATE users SET roll_number=? WHERE id=?', (f"STU-{int(student['id']):05d}", student['id']))
     c.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_roll_number ON users(roll_number) WHERE roll_number IS NOT NULL')
-    init_billing_tables(c, addcol)
     c.execute('''CREATE TABLE IF NOT EXISTS password_reset_tokens(
         token_hash TEXT PRIMARY KEY,
         user_id INTEGER NOT NULL,
@@ -627,10 +637,6 @@ def token_account(authorization):
 
 def profile_picture_url(value):
     return value
-
-
-billing_router, verify_premium_access = build_billing(db, authenticated_user, VALID_ROLES)
-app.include_router(billing_router)
 
 
 class BTBBReaderParser(HTMLParser):
@@ -4427,7 +4433,6 @@ def delete_lesson_plan(lesson_id: int, teacher_id: int):
 @app.post('/api/teacher/quizzes/generate')
 def generate_teacher_quiz(x: TeacherQuizGenerateRequest):
     teacher_only(x.teacher_id)
-    verify_premium_access(x.teacher_id, 'ai_quiz_generator')
     count = max(1, min(x.question_count, 50))
     level = get_class_learning_level(x.class_id, x.teacher_id)
     level_guidance = learning_level_guidance(level['institution_mode'], level['grade_level'] or x.grade_level)
@@ -4625,9 +4630,9 @@ def ai_check_quiz(x: QuizAICheckRequest):
             )
             curriculum_file, curriculum_temp_path = upload_curriculum_pdf(
                 source_book,
-                submission['curriculum_chapter'],
-                submission['curriculum_topic'],
-                json.loads(submission['curriculum_pages'] or 'null'),
+                att['curriculum_chapter'],
+                att['curriculum_topic'],
+                json.loads(att['curriculum_pages'] or 'null'),
             )
             source_context = (
                 f"Verify the quiz questions and answer key against BTBB textbook {source_book['title']}, "
@@ -4718,7 +4723,7 @@ def ai_check_quiz(x: QuizAICheckRequest):
     finally:
         if curriculum_temp_path and os.path.exists(curriculum_temp_path):
             os.remove(curriculum_temp_path)
-        delete_uploaded_curriculum_source(curriculum_file, submission['curriculum_book_id'])
+        delete_uploaded_curriculum_source(curriculum_file, att['curriculum_book_id'])
 
 
 
@@ -5098,7 +5103,7 @@ Do not wrap JSON in markdown fences.
                 client.files.delete(name=gemini_file.name)
             except Exception:
                 pass
-        delete_uploaded_curriculum_source(curriculum_file, submission['curriculum_book_id'])
+        delete_uploaded_curriculum_source(curriculum_file, att['curriculum_book_id'])
 
     return {
         'success': True,
